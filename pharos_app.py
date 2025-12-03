@@ -4,6 +4,8 @@ import numpy as np
 import numpy_financial as npf
 import altair as alt
 import os
+from datetime import datetime
+from fpdf import FPDF
 
 # --- PASSWORD PROTECTION ---
 def check_password():
@@ -34,67 +36,18 @@ st.set_page_config(page_title="Pharos BTM Model", layout="wide", page_icon="🦅
 # --- CUSTOM STYLING (CSS) ---
 st.markdown("""
 <style>
-    /* Main Background */
-    .stApp {
-        background-color: #FFFFFF;
-    }
-    
-    /* Pharos Navy Blue for Headers */
-    h1, h2, h3 {
-        color: #0E2F44 !important;
-        font-family: 'Helvetica Neue', sans-serif;
-    }
-    
-    /* Sidebar Background - Very Light Grey/Blue */
-    [data-testid="stSidebar"] {
-        background-color: #F8F9FB;
-        border-right: 1px solid #E6E9EF;
-    }
-    
-    /* Metric Cards Styling */
+    .stApp { background-color: #FFFFFF; }
+    h1, h2, h3 { color: #0E2F44 !important; font-family: 'Helvetica Neue', sans-serif; }
+    [data-testid="stSidebar"] { background-color: #F8F9FB; border-right: 1px solid #E6E9EF; }
     div[data-testid="stMetric"] {
-        background-color: #FFFFFF;
-        border: 1px solid #E6E9EF;
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        text-align: center;
+        background-color: #FFFFFF; border: 1px solid #E6E9EF;
+        padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center;
     }
-    
-    /* Metric Label (Small Text) */
-    div[data-testid="stMetricLabel"] {
-        color: #6E7781;
-        font-size: 14px;
-        font-weight: 500;
-    }
-    
-    /* Metric Value (Big Number) */
-    div[data-testid="stMetricValue"] {
-        color: #0E2F44;
-        font-size: 26px;
-        font-weight: 700;
-    }
-    
-    /* Custom Gold Divider Line */
-    hr {
-        margin-top: 1em;
-        margin-bottom: 1em;
-        border: 0;
-        border-top: 2px solid #D4AF37; /* Pharos Gold */
-    }
-    
-    /* Button Styling */
-    div.stButton > button {
-        background-color: #0E2F44;
-        color: white;
-        border-radius: 5px;
-        border: none;
-        padding: 10px 20px;
-    }
-    div.stButton > button:hover {
-        background-color: #1C4E6B;
-        color: white;
-    }
+    div[data-testid="stMetricLabel"] { color: #6E7781; font-size: 14px; font-weight: 500; }
+    div[data-testid="stMetricValue"] { color: #0E2F44; font-size: 26px; font-weight: 700; }
+    hr { margin-top: 1em; margin-bottom: 1em; border: 0; border-top: 2px solid #D4AF37; }
+    div.stButton > button { background-color: #0E2F44; color: white; border-radius: 5px; border: none; padding: 10px 20px; }
+    div.stButton > button:hover { background-color: #1C4E6B; color: white; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -255,9 +208,9 @@ T = LANG[sel_lang]
 # --- HEADER WITH LOGO ---
 col_logo, col_title = st.columns([1, 4])
 with col_logo:
-    try:
+    if os.path.exists("logo.jpg"):
         st.image("logo.jpg", width=150)
-    except:
+    else:
         st.write("🦅") 
 with col_title:
     st.title("Pharos Capital: BTM Model")
@@ -290,10 +243,8 @@ st.sidebar.header(T["s1_title"])
 with st.sidebar.expander(T["s1_time"], expanded=True):
     c_start1, c_start2 = st.columns(2)
     with c_start1:
-        # DEFAULT START YEAR 2026
         start_year = st.number_input(T["s1_year"], value=2026, step=1)
     with c_start2:
-        # DEFAULT START Q1 (index 0)
         start_q_str = st.selectbox(T["s1_q"], ["Q1", "Q2", "Q3", "Q4"], index=0)
     start_q_num = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}[start_q_str]
 
@@ -321,7 +272,6 @@ with st.sidebar.expander(T["s1_contract"], expanded=False):
 
 st.sidebar.header(T["s2_title"])
 with st.sidebar.expander("CAPEX & OPEX", expanded=False):
-    # DEFAULT 3 QUARTERS
     construction_quarters = st.slider(T["s2_const"], 0, 8, 3)
     capex_million_cop = st.number_input(f"{T['s2_capex']} (M COP)", value=120.0, step=10.0, format="%.1f")
     opex_million_cop_annual = st.number_input(f"{T['s2_opex']} (M COP/yr)", value=4.0, step=0.5, format="%.1f")
@@ -543,8 +493,72 @@ col_head1, col_head2 = st.columns([3, 1])
 with col_head1:
     st.subheader(f"📊 {currency_mode}")
 with col_head2:
-    csv_data = df_annual.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Excel", csv_data, "pharos_cf.csv", "text/csv")
+    # PDF GENERATOR LOGIC
+    class PDF(FPDF):
+        def header(self):
+            # Try to place logo
+            if os.path.exists("logo.jpg"):
+                self.image("logo.jpg", 10, 8, 33)
+            self.set_font('Arial', 'B', 15)
+            self.cell(80) # padding
+            self.cell(30, 10, 'Pharos Capital: Investment Memo', 0, 0, 'C')
+            self.ln(20)
+
+        def footer(self):
+            self.set_y(-15)
+            self.set_font('Arial', 'I', 8)
+            self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+    def create_pdf(df_agg, proj_name, cli_name, loc):
+        pdf = PDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+        
+        # Section 1: Project Info
+        pdf.set_fill_color(240, 240, 240)
+        pdf.cell(0, 10, "1. Project Overview", 0, 1, 'L', 1)
+        pdf.ln(2)
+        pdf.cell(50, 10, f"Project Name: {proj_name}", 0, 1)
+        pdf.cell(50, 10, f"Client: {cli_name}", 0, 1)
+        pdf.cell(50, 10, f"Location: {loc}", 0, 1)
+        pdf.ln(5)
+        
+        # Section 2: Key Metrics
+        pdf.cell(0, 10, "2. Executive Summary", 0, 1, 'L', 1)
+        pdf.ln(2)
+        # Add key metrics text here
+        pdf.cell(50, 10, f"Equity IRR: {irr_levered:.1f}%", 0, 1)
+        pdf.cell(50, 10, f"Equity NPV: {symbol}{npv_equity:,.1f} M", 0, 1)
+        pdf.cell(50, 10, f"MOIC: {moic_levered:.1f}x", 0, 1)
+        pdf.ln(5)
+        
+        # Section 3: Financials (Simplified)
+        pdf.cell(0, 10, "3. Financial Summary (Annual)", 0, 1, 'L', 1)
+        pdf.ln(2)
+        pdf.set_font("Arial", size=8)
+        
+        # Table Header
+        cols = ["Calendar_Year", "Revenue_Disp", "EBITDA_Disp", "LFCF_Disp"]
+        headers = ["Year", "Revenue", "EBITDA", "Net Cash"]
+        col_widths = [20, 35, 35, 35]
+        
+        for i, h in enumerate(headers):
+            pdf.cell(col_widths[i], 7, h, 1, 0, 'C', 1)
+        pdf.ln()
+        
+        # Table Rows
+        for index, row in df_agg.iterrows():
+            pdf.cell(col_widths[0], 7, str(int(row["Calendar_Year"])), 1)
+            pdf.cell(col_widths[1], 7, f"{row['Revenue_Disp']:.1f}", 1)
+            pdf.cell(col_widths[2], 7, f"{row['EBITDA_Disp']:.1f}", 1)
+            pdf.cell(col_widths[3], 7, f"{row['LFCF_Disp']:.1f}", 1)
+            pdf.ln()
+            
+        return pdf.output(dest='S').encode('latin-1')
+
+    # Create the PDF Button
+    pdf_bytes = create_pdf(df_annual, project_name, client_name, project_loc)
+    st.download_button(label="📄 Download PDF Report", data=pdf_bytes, file_name="pharos_report.pdf", mime="application/pdf")
 
 k1, k2, k3, k4 = st.columns(4)
 symbol = "$" if "USD" in currency_mode else ""
@@ -623,13 +637,14 @@ pnl_display.index = [
 st.dataframe(pnl_display.style.format("{:,.1f}"))
 
 st.markdown(f"### {T['tab_full']}")
-# CASH FLOW Transposed
+# CASH FLOW Transposed (FIXED INDEX LENGTH)
 cf_cols = ["Calendar_Year", "Generation_MWh", "Revenue_Disp", "OPEX_Disp", "EBITDA_Disp", "UFCF_Disp", "LFCF_Disp"]
 cf_display = df_annual[cf_cols].set_index("Calendar_Year").T
 cf_display.index = [
     "Generation (MWh)", "Revenue", "(-) OPEX", "(=) EBITDA", 
     "Unlevered FCF", "Levered FCF"
 ]
+# Fix index alignment for display
 st.dataframe(cf_display.style.format("{:,.1f}"))
 
 st.markdown("---")
