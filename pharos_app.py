@@ -34,18 +34,67 @@ st.set_page_config(page_title="Pharos BTM Model", layout="wide", page_icon="🦅
 # --- CUSTOM STYLING (CSS) ---
 st.markdown("""
 <style>
-    .stApp { background-color: #FFFFFF; }
-    h1, h2, h3 { color: #0E2F44 !important; font-family: 'Helvetica Neue', sans-serif; }
-    [data-testid="stSidebar"] { background-color: #F8F9FB; border-right: 1px solid #E6E9EF; }
-    div[data-testid="stMetric"] {
-        background-color: #FFFFFF; border: 1px solid #E6E9EF;
-        padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center;
+    /* Main Background */
+    .stApp {
+        background-color: #FFFFFF;
     }
-    div[data-testid="stMetricLabel"] { color: #6E7781; font-size: 14px; font-weight: 500; }
-    div[data-testid="stMetricValue"] { color: #0E2F44; font-size: 26px; font-weight: 700; }
-    hr { margin-top: 1em; margin-bottom: 1em; border: 0; border-top: 2px solid #D4AF37; }
-    div.stButton > button { background-color: #0E2F44; color: white; border-radius: 5px; border: none; padding: 10px 20px; }
-    div.stButton > button:hover { background-color: #1C4E6B; color: white; }
+    
+    /* Pharos Navy Blue for Headers */
+    h1, h2, h3 {
+        color: #0E2F44 !important;
+        font-family: 'Helvetica Neue', sans-serif;
+    }
+    
+    /* Sidebar Background - Very Light Grey/Blue */
+    [data-testid="stSidebar"] {
+        background-color: #F8F9FB;
+        border-right: 1px solid #E6E9EF;
+    }
+    
+    /* Metric Cards Styling */
+    div[data-testid="stMetric"] {
+        background-color: #FFFFFF;
+        border: 1px solid #E6E9EF;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        text-align: center;
+    }
+    
+    /* Metric Label (Small Text) */
+    div[data-testid="stMetricLabel"] {
+        color: #6E7781;
+        font-size: 14px;
+        font-weight: 500;
+    }
+    
+    /* Metric Value (Big Number) */
+    div[data-testid="stMetricValue"] {
+        color: #0E2F44;
+        font-size: 26px;
+        font-weight: 700;
+    }
+    
+    /* Custom Gold Divider Line */
+    hr {
+        margin-top: 1em;
+        margin-bottom: 1em;
+        border: 0;
+        border-top: 2px solid #D4AF37; /* Pharos Gold */
+    }
+    
+    /* Button Styling */
+    div.stButton > button {
+        background-color: #0E2F44;
+        color: white;
+        border-radius: 5px;
+        border: none;
+        padding: 10px 20px;
+    }
+    div.stButton > button:hover {
+        background-color: #1C4E6B;
+        color: white;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -241,9 +290,11 @@ st.sidebar.header(T["s1_title"])
 with st.sidebar.expander(T["s1_time"], expanded=True):
     c_start1, c_start2 = st.columns(2)
     with c_start1:
-        start_year = st.number_input(T["s1_year"], value=2025, step=1)
+        # DEFAULT START YEAR 2026
+        start_year = st.number_input(T["s1_year"], value=2026, step=1)
     with c_start2:
-        start_q_str = st.selectbox(T["s1_q"], ["Q1", "Q2", "Q3", "Q4"], index=2)
+        # DEFAULT START Q1 (index 0)
+        start_q_str = st.selectbox(T["s1_q"], ["Q1", "Q2", "Q3", "Q4"], index=0)
     start_q_num = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}[start_q_str]
 
 with st.sidebar.expander(T["s1_contract"], expanded=False):
@@ -270,7 +321,8 @@ with st.sidebar.expander(T["s1_contract"], expanded=False):
 
 st.sidebar.header(T["s2_title"])
 with st.sidebar.expander("CAPEX & OPEX", expanded=False):
-    construction_quarters = st.slider(T["s2_const"], 0, 8, 2)
+    # DEFAULT 3 QUARTERS
+    construction_quarters = st.slider(T["s2_const"], 0, 8, 3)
     capex_million_cop = st.number_input(f"{T['s2_capex']} (M COP)", value=120.0, step=10.0, format="%.1f")
     opex_million_cop_annual = st.number_input(f"{T['s2_opex']} (M COP/yr)", value=4.0, step=0.5, format="%.1f")
     opex_inflation_annual = st.number_input(T["s2_oinf"], value=5.0, step=0.5, format="%.1f") / 100
@@ -465,7 +517,7 @@ agg_cols = ["Generation_MWh", "Revenue_Disp", "OPEX_Disp", "Gross_Disp", "SGA_Di
             "UFCF_Disp", "LFCF_Disp"]
 df_annual = df_dash.groupby("Calendar_Year")[agg_cols].sum().reset_index()
 
-# FIXED PRICE CALCULATION (CRASH-PROOF)
+# FIXED PRICE CALCULATION
 df_annual["Implied_Price_Unit"] = 0.0
 mask = df_annual["Generation_MWh"] > 0
 if "USD" in currency_mode:
@@ -571,14 +623,13 @@ pnl_display.index = [
 st.dataframe(pnl_display.style.format("{:,.1f}"))
 
 st.markdown(f"### {T['tab_full']}")
-# CASH FLOW Transposed (FIXED INDEX LENGTH)
+# CASH FLOW Transposed
 cf_cols = ["Calendar_Year", "Generation_MWh", "Revenue_Disp", "OPEX_Disp", "EBITDA_Disp", "UFCF_Disp", "LFCF_Disp"]
 cf_display = df_annual[cf_cols].set_index("Calendar_Year").T
 cf_display.index = [
     "Generation (MWh)", "Revenue", "(-) OPEX", "(=) EBITDA", 
     "Unlevered FCF", "Levered FCF"
 ]
-# Fix index alignment for display
 st.dataframe(cf_display.style.format("{:,.1f}"))
 
 st.markdown("---")
@@ -586,7 +637,8 @@ st.header(T["sim_title"])
 with st.expander("Config", expanded=True):
     c_sim1, c_sim2 = st.columns(2)
     with c_sim1:
-        sim_years = st.slider(T["s5_year"], 1, ppa_term_years, (5, 10))
+        # SIM START YEAR MUST BE >= 2
+        sim_years = st.slider(T["s5_year"], 2, ppa_term_years, (5, 10))
     with c_sim2:
         base_val = int(final_exit_val_cop) if final_exit_val_cop > 0 else 100
         min_v = st.number_input(f"{T['sim_min']} (COP)", value=max(10, base_val - 50), step=10)
@@ -621,4 +673,3 @@ if st.button(T["sim_run"]):
     
     text = heatmap.mark_text(baseline='middle').encode(text='IRR:Q', color=alt.value('black'))
     st.altair_chart(heatmap + text, use_container_width=True)
-
