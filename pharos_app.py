@@ -384,8 +384,19 @@ opex_list, sga_list, gross_list = [], [], []
 dep_list, int_list, tax_list, ftt_list, ica_list = [], [], [], [], []
 ufcf_list, lfcf_list, debt_bal_list, book_val_list, fx_rate_list = [], [], [], [], []
 
+# Tax base tracking (for loss carryforward)
+base_unlev_list, base_lev_list = [], []
+cum_base_unlev_list, cum_base_lev_list = [], []
+cum_tax_unlev_list, cum_tax_lev_list = [], []
+
 debt_balance = total_debt_principal
 accumulated_dep = 0
+
+# Cumulative tax base & tax paid
+cum_base_unlev = 0.0
+cum_base_lev = 0.0
+cum_tax_unlev = 0.0
+cum_tax_lev = 0.0
 
 for i, q in enumerate(quarters_range):
     abs_q = (start_q_num - 1) + i
@@ -441,9 +452,26 @@ for i, q in enumerate(quarters_range):
     else:
         interest = principal = 0
 
-    tax_unlevered = (ebitda - dep) * tax_rate if (ebitda - dep) > 0 else 0
-    taxable_inc = ebitda - interest - dep
-    tax_levered = taxable_inc * tax_rate if taxable_inc > 0 else 0
+    # --- TAX WITH LOSS CARRYFORWARD ---
+    # Unlevered base
+    base_unlev = ebitda - dep
+    cum_base_unlev += base_unlev
+
+    # Levered base (after interest)
+    base_lev = ebitda - interest - dep
+    cum_base_lev += base_lev
+
+    # Theoretical cumulative tax (cannot be negative)
+    theor_tax_unlev = tax_rate * max(cum_base_unlev, 0)
+    theor_tax_lev = tax_rate * max(cum_base_lev, 0)
+
+    # Tax this quarter = increase in cumulative tax
+    tax_unlevered = max(0, theor_tax_unlev - cum_tax_unlev)
+    tax_levered = max(0, theor_tax_lev - cum_tax_lev)
+
+    # Update cumulative tax paid
+    cum_tax_unlev += tax_unlevered
+    cum_tax_lev += tax_levered
 
     total_disbursements = capex_levered + opex + sga + principal + interest + tax_levered
     ftt_cost = total_disbursements * ftt_rate
@@ -473,6 +501,13 @@ for i, q in enumerate(quarters_range):
     book_val_list.append(book_val)
     fx_rate_list.append(fx_rate_q)
 
+    base_unlev_list.append(base_unlev)
+    base_lev_list.append(base_lev)
+    cum_base_unlev_list.append(cum_base_unlev)
+    cum_base_lev_list.append(cum_base_lev)
+    cum_tax_unlev_list.append(cum_tax_unlev)
+    cum_tax_lev_list.append(cum_tax_lev)
+
 df_full = pd.DataFrame({
     "Quarter": q_list, "Global_Year": gy_list, "Calendar_Year": cal_list,
     "FX_Rate": fx_rate_list, "Generation_MWh": gen_list,
@@ -480,7 +515,13 @@ df_full = pd.DataFrame({
     "SGA_M_COP": sga_list, "ICA_M_COP": ica_list, "EBITDA_M_COP": ebitda_list, "Depreciation_M_COP": dep_list,
     "Interest_M_COP": int_list, "Tax_M_COP": tax_list, "FTT_M_COP": ftt_list,
     "UFCF_M_COP": ufcf_list, "LFCF_M_COP": lfcf_list,
-    "Debt_Balance_M_COP": debt_bal_list, "Book_Value_M_COP": book_val_list
+    "Debt_Balance_M_COP": debt_bal_list, "Book_Value_M_COP": book_val_list,
+    "Tax_Base_Unlev_M_COP": base_unlev_list,
+    "Tax_Base_Lev_M_COP": base_lev_list,
+    "Tax_Base_Unlev_Cum_M_COP": cum_base_unlev_list,
+    "Tax_Base_Lev_Cum_M_COP": cum_base_lev_list,
+    "Tax_Unlev_Cum_M_COP": cum_tax_unlev_list,
+    "Tax_Lev_Cum_M_COP": cum_tax_lev_list
 })
 
 conversion_factor = 1000 / df_full["FX_Rate"] if "USD" in currency_mode else 1
@@ -733,6 +774,41 @@ with st.expander(T["rev_proof"], expanded=False):
     st.dataframe(proof_df.style.format({
         "Year": "{:.0f}", T["col_gen"]: "{:,.1f}", T["col_rev"]: "{:,.1f}"
     }))
+
+# Extra expander to inspect tax base & loss carryforward (levered)
+with st.expander("Tax Base & Loss Carryforward (Levered view)", expanded=False):
+    tax_view = df_full[[
+        "Calendar_Year",
+        "Quarter",
+        "EBITDA_M_COP",
+        "Interest_M_COP",
+        "Depreciation_M_COP",
+        "Tax_Base_Lev_M_COP",
+        "Tax_Base_Lev_Cum_M_COP",
+        "Tax_M_COP",
+        "Tax_Lev_Cum_M_COP"
+    ]].copy()
+    tax_view.rename(columns={
+        "EBITDA_M_COP": "EBITDA",
+        "Interest_M_COP": "Interest",
+        "Depreciation_M_COP": "Depreciation",
+        "Tax_Base_Lev_M_COP": "Tax Base (Levered)",
+        "Tax_Base_Lev_Cum_M_COP": "Tax Base Cumulative",
+        "Tax_M_COP": "Tax (Quarter)",
+        "Tax_Lev_Cum_M_COP": "Tax Cumulative"
+    }, inplace=True)
+    st.dataframe(
+        tax_view.style.format({
+            "EBITDA": "{:,.1f}",
+            "Interest": "{:,.1f}",
+            "Depreciation": "{:,.1f}",
+            "Tax Base (Levered)": "{:,.1f}",
+            "Tax Base Cumulative": "{:,.1f}",
+            "Tax (Quarter)": "{:,.1f}",
+            "Tax Cumulative": "{:,.1f}",
+        }),
+        use_container_width=True
+    )
 
 st.markdown(f"##### {T['chart_cf']}")
 df_melt = df_annual_dash.melt(
