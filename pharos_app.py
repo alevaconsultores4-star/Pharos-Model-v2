@@ -4,7 +4,6 @@ import numpy as np
 import numpy_financial as npf
 import altair as alt
 import os
-from datetime import datetime
 from fpdf import FPDF
 
 # --- PASSWORD PROTECTION ---
@@ -488,80 +487,66 @@ irr_levered = get_irr(df_dash["LFCF_Disp"])
 moic_levered = df_dash["LFCF_Disp"].sum() / equity_inv_disp if equity_inv_disp > 0 else 0
 npv_equity = npf.npv(investor_disc_rate / 4, [0] + df_dash["LFCF_Disp"].tolist())
 
+# --- DEFINE SYMBOL BEFORE DISPLAY ---
+symbol = "$" if "USD" in currency_mode else ""
+
 # --- OUTPUT ---
 col_head1, col_head2 = st.columns([3, 1])
 with col_head1:
     st.subheader(f"📊 {currency_mode}")
 with col_head2:
-    # PDF GENERATOR LOGIC
+    # PDF Logic (Using Symbol)
     class PDF(FPDF):
         def header(self):
-            # Try to place logo
             if os.path.exists("logo.jpg"):
                 self.image("logo.jpg", 10, 8, 33)
             self.set_font('Arial', 'B', 15)
-            self.cell(80) # padding
+            self.cell(80) 
             self.cell(30, 10, 'Pharos Capital: Investment Memo', 0, 0, 'C')
             self.ln(20)
-
         def footer(self):
             self.set_y(-15)
             self.set_font('Arial', 'I', 8)
             self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-    def create_pdf(df_agg, proj_name, cli_name, loc):
+    def create_pdf(df_agg, proj_name, cli_name, loc, curr_sym):
         pdf = PDF()
         pdf.add_page()
         pdf.set_font("Arial", size=12)
-        
-        # Section 1: Project Info
         pdf.set_fill_color(240, 240, 240)
         pdf.cell(0, 10, "1. Project Overview", 0, 1, 'L', 1)
         pdf.ln(2)
-        pdf.cell(50, 10, f"Project Name: {proj_name}", 0, 1)
+        pdf.cell(50, 10, f"Project: {proj_name}", 0, 1)
         pdf.cell(50, 10, f"Client: {cli_name}", 0, 1)
         pdf.cell(50, 10, f"Location: {loc}", 0, 1)
         pdf.ln(5)
-        
-        # Section 2: Key Metrics
         pdf.cell(0, 10, "2. Executive Summary", 0, 1, 'L', 1)
         pdf.ln(2)
-        # Add key metrics text here
         pdf.cell(50, 10, f"Equity IRR: {irr_levered:.1f}%", 0, 1)
-        pdf.cell(50, 10, f"Equity NPV: {symbol}{npv_equity:,.1f} M", 0, 1)
+        pdf.cell(50, 10, f"Equity NPV: {curr_sym}{npv_equity:,.1f} M", 0, 1)
         pdf.cell(50, 10, f"MOIC: {moic_levered:.1f}x", 0, 1)
         pdf.ln(5)
-        
-        # Section 3: Financials (Simplified)
         pdf.cell(0, 10, "3. Financial Summary (Annual)", 0, 1, 'L', 1)
         pdf.ln(2)
         pdf.set_font("Arial", size=8)
-        
-        # Table Header
         cols = ["Calendar_Year", "Revenue_Disp", "EBITDA_Disp", "LFCF_Disp"]
         headers = ["Year", "Revenue", "EBITDA", "Net Cash"]
-        col_widths = [20, 35, 35, 35]
-        
+        w = [20, 35, 35, 35]
         for i, h in enumerate(headers):
-            pdf.cell(col_widths[i], 7, h, 1, 0, 'C', 1)
+            pdf.cell(w[i], 7, h, 1, 0, 'C', 1)
         pdf.ln()
-        
-        # Table Rows
         for index, row in df_agg.iterrows():
-            pdf.cell(col_widths[0], 7, str(int(row["Calendar_Year"])), 1)
-            pdf.cell(col_widths[1], 7, f"{row['Revenue_Disp']:.1f}", 1)
-            pdf.cell(col_widths[2], 7, f"{row['EBITDA_Disp']:.1f}", 1)
-            pdf.cell(col_widths[3], 7, f"{row['LFCF_Disp']:.1f}", 1)
+            pdf.cell(w[0], 7, str(int(row["Calendar_Year"])), 1)
+            pdf.cell(w[1], 7, f"{row['Revenue_Disp']:.1f}", 1)
+            pdf.cell(w[2], 7, f"{row['EBITDA_Disp']:.1f}", 1)
+            pdf.cell(w[3], 7, f"{row['LFCF_Disp']:.1f}", 1)
             pdf.ln()
-            
         return pdf.output(dest='S').encode('latin-1')
 
-    # Create the PDF Button
-    pdf_bytes = create_pdf(df_annual, project_name, client_name, project_loc)
+    pdf_bytes = create_pdf(df_annual, project_name, client_name, project_loc, symbol)
     st.download_button(label="📄 Download PDF Report", data=pdf_bytes, file_name="pharos_report.pdf", mime="application/pdf")
 
 k1, k2, k3, k4 = st.columns(4)
-symbol = "$" if "USD" in currency_mode else ""
 k1.metric(T["kpi_eq"], f"{symbol}{equity_inv_disp:,.1f}")
 start_p = current_tariff * (1 - discount_rate)
 if "USD" in currency_mode: start_p /= fx_rate_current
@@ -637,14 +622,13 @@ pnl_display.index = [
 st.dataframe(pnl_display.style.format("{:,.1f}"))
 
 st.markdown(f"### {T['tab_full']}")
-# CASH FLOW Transposed (FIXED INDEX LENGTH)
+# CASH FLOW Transposed
 cf_cols = ["Calendar_Year", "Generation_MWh", "Revenue_Disp", "OPEX_Disp", "EBITDA_Disp", "UFCF_Disp", "LFCF_Disp"]
 cf_display = df_annual[cf_cols].set_index("Calendar_Year").T
 cf_display.index = [
     "Generation (MWh)", "Revenue", "(-) OPEX", "(=) EBITDA", 
     "Unlevered FCF", "Levered FCF"
 ]
-# Fix index alignment for display
 st.dataframe(cf_display.style.format("{:,.1f}"))
 
 st.markdown("---")
