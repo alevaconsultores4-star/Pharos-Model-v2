@@ -77,9 +77,6 @@ def set_base_case():
 if "ppa_term" not in st.session_state:
     set_base_case()
 
-# --- CONFIG ---
-st.set_page_config(page_title="Pharos BTM Model", layout="wide", page_icon="🦅")
-
 # --- CUSTOM STYLING ---
 st.markdown("""
 <style>
@@ -199,8 +196,13 @@ st.markdown("---")
 st.sidebar.header(T["curr_title"])
 currency_mode = st.sidebar.radio(T["curr_display"], ["COP (Millions)", "USD (Thousands)"], horizontal=True)
 
+# Define Symbol based on currency mode
+symbol = "$" if "USD" in currency_mode else ""
+# Define Inv Conversion Factor early
+inv_conv_factor = 1000 / st.session_state.fx_rate_current if "USD" in currency_mode else 1
+
 with st.sidebar.expander("FX & Macro", expanded=False):
-    fx_rate_current = st.number_input(T["curr_fx"], value=4100.0, step=50.0, format="%.1f")
+    fx_rate_current = st.number_input(T["curr_fx"], key="fx_rate_current", value=4100.0, step=50.0, format="%.1f")
     us_inflation_annual = st.number_input(T["curr_inf"], value=2.5, step=0.1, format="%.1f") / 100
 
 # ==========================================
@@ -249,6 +251,7 @@ with st.sidebar.expander("CAPEX & OPEX", expanded=False):
     
     # SGA During Construction Cost
     sga_const_pct = st.number_input(T["s2_sgaconst"], key="sga_const_val", step=0.1, format="%.1f", help="SGA as % of CAPEX, capitalized during construction") / 100
+    
     sga_const_cost_cop = capex_million_cop * sga_const_pct
     sga_const_cost_disp = sga_const_cost_cop * (1000 / fx_rate_current if "USD" in currency_mode else 1)
     st.write(f"**Cost:** {symbol}{sga_const_cost_disp:,.1f} {currency_mode.split()[0]}")
@@ -304,7 +307,7 @@ with st.sidebar.expander("Valuation", expanded=True):
 full_quarters = construction_quarters + (ppa_term_years * 4)
 quarters_range = list(range(1, full_quarters + 1))
 
-# --- INITIAL CAPITALIZATION (COP) ---
+# Initial Capitalization
 sga_const_cost = capex_million_cop * sga_const_pct
 if enable_debt:
     structuring_fee = (capex_million_cop * debt_ratio) * structuring_fee_pct
@@ -676,7 +679,7 @@ with st.expander("Config", expanded=True):
         base_val = int(final_exit_val_cop) if final_exit_val_cop > 0 else 100
         min_v = st.number_input(f"{T['sim_min']} (COP)", value=max(10, base_val - 50), step=10)
         max_v = st.number_input(f"{T['sim_max']} (COP)", value=base_val + 50, step=10)
-        step_v = st.number_input("Step Size", value=10, step=1)
+        step_v = st.number_input(T["sim_step"], value=10, step=1)
 
 def calculate_sim_irr(y_exit, v_exit_cop):
     exit_q = construction_quarters + (y_exit * 4)
@@ -695,7 +698,7 @@ if st.button(T["sim_run"]):
     sim_data = []
     for v in vals_to_sim:
         for y in years_to_sim:
-            sim_data.append({T["s5_year"]: y, T["s5_val"]: v, "IRR": round(calculate_sim_irr(y, v), 1)})
+            sim_data.append({T["s5_year"]: y, "Sale Value": v, "IRR": round(calculate_sim_irr(y, v), 1)})
     
     heatmap = alt.Chart(pd.DataFrame(sim_data)).mark_rect().encode(
         x=alt.X(f'{T["s5_val"]}:O'),
