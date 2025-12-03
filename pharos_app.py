@@ -501,8 +501,6 @@ irr_levered = get_irr(df_dash["LFCF_Disp"])
 moic_levered = df_dash["LFCF_Disp"].sum() / equity_inv_disp if equity_inv_disp > 0 else 0
 npv_equity = npf.npv(investor_disc_rate / 4, [0] + df_dash["LFCF_Disp"].tolist())
 
-symbol = "$" if "USD" in currency_mode else ""
-
 # --- OUTPUT ---
 col_head1, col_head2 = st.columns([3, 1])
 with col_head1:
