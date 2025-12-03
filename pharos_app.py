@@ -4,7 +4,40 @@ import numpy as np
 import numpy_financial as npf
 import altair as alt
 
-st.set_page_config(page_title="Pharos Investor Model (Multi-Currency)", layout="wide")
+# --- PASSWORD PROTECTION ---
+def check_password():
+    """Returns `True` if the user had the correct password."""
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == "pharos2025": # <--- CHANGE PASSWORD HERE
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # don't store password
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        # First run, show input for password.
+        st.text_input(
+            "Enter Password", type="password", on_change=password_entered, key="password"
+        )
+        return False
+    elif not st.session_state["password_correct"]:
+        # Password incorrect, show input + error.
+        st.text_input(
+            "Enter Password", type="password", on_change=password_entered, key="password"
+        )
+        st.error("😕 Password incorrect")
+        return False
+    else:
+        # Password correct.
+        return True
+
+if not check_password():
+    st.stop()
+
+# --- MAIN APP START ---
+st.set_page_config(page_title="Pharos Investor Model (Secure)", layout="wide")
 st.title("🦅 Pharos Capital: Investor Dashboard")
 
 # ==========================================
@@ -16,7 +49,6 @@ currency_mode = st.sidebar.radio("Display Currency", ["COP (Millions)", "USD (Th
 with st.sidebar.expander("FX & Macro Assumptions", expanded=False):
     fx_rate_current = st.number_input("Current FX Rate (COP/USD)", value=4100.0, step=10.0, format="%.1f")
     us_inflation_annual = st.number_input("US Inflation (Annual %)", value=2.5, step=0.1, format="%.1f") / 100
-    # Local inflation is defined below, but we need it for the FX projection
 
 # ==========================================
 # 1. PPA & REVENUE
@@ -24,8 +56,8 @@ with st.sidebar.expander("FX & Macro Assumptions", expanded=False):
 st.sidebar.header("1. PPA & Revenue")
 with st.sidebar.expander("Contract Details", expanded=False):
     ppa_term_years = st.slider("PPA Duration (Years)", 5, 20, 10)
-    current_tariff = st.number_input("Current Tariff (COP/kWh)", value=881.6, format="%.1f")
-    utility_inflation_annual = st.number_input("Colombia Inflation (Annual %)", value=5.0, format="%.1f") / 100
+    current_tariff = st.number_input("Current Tariff ($/kWh)", value=881.6, format="%.1f")
+    utility_inflation_annual = st.number_input("Utility Inflation (Annual %)", value=5.0, format="%.1f") / 100
     discount_rate = st.number_input("Discount to Client (%)", value=25.0, format="%.1f") / 100
     
     link_to_inflation = st.checkbox("Index PPA Price to Inflation?", value=False)
@@ -52,7 +84,6 @@ with st.sidebar.expander("Contract Details", expanded=False):
 st.sidebar.header("2. Costs & Construction")
 with st.sidebar.expander("CAPEX, Construction & OPEX", expanded=False):
     construction_quarters = st.slider("Construction Period (Quarters)", 0, 8, 2)
-    # Input is always in COP Millions for simplicity
     capex_million_cop = st.number_input("Total CAPEX (M COP)", value=120.0, format="%.1f")
     opex_million_cop_annual = st.number_input("Annual OPEX (M COP/yr)", value=4.0, format="%.1f")
     opex_inflation_annual = st.number_input("OPEX Inflation (Annual %)", value=5.0, format="%.1f") / 100
@@ -108,7 +139,6 @@ with st.sidebar.expander("Scenario & Valuation", expanded=True):
 full_quarters = construction_quarters + (ppa_term_years * 4)
 quarters_range = list(range(1, full_quarters + 1))
 
-# Debt Setup (Calculated in COP)
 if enable_debt:
     structuring_fee = (capex_million_cop * debt_ratio) * structuring_fee_pct
     total_debt_principal = capex_million_cop * debt_ratio
@@ -140,12 +170,9 @@ accumulated_dep = 0
 
 for q in quarters_range:
     # 0. FX Forecast (PPP)
-    # Rate = Current * ((1+Col_Inf)/(1+US_Inf))^t
-    # t in years = (q-1)/4
     t_years = (q - 1) / 4
     fx_rate_q = fx_rate_current * ((1 + utility_inflation_annual) / (1 + us_inflation_annual)) ** t_years
     
-    # Phase Logic
     if q <= construction_quarters:
         phase = "Construction"
         op_year = 0
@@ -242,9 +269,6 @@ df_full = pd.DataFrame({
 })
 
 # --- CURRENCY CONVERSION ---
-# Conversion Logic: 
-# COP (Millions) -> USD (Thousands)
-# Value_USD_k = (Value_COP_M * 1,000,000) / FX / 1,000 = Value_COP_M * 1000 / FX
 conversion_factor = 1000 / df_full["FX_Rate"] if "USD" in currency_mode else 1
 
 df_full["Revenue_Disp"] = df_full["Revenue_M_COP"] * conversion_factor
@@ -276,7 +300,6 @@ cg_tax = gain * cap_gains_rate if gain > 0 else 0
 exit_inflow_unlevered_cop = final_exit_val_cop - cg_tax
 exit_inflow_levered_cop = final_exit_val_cop - debt_b_final - cg_tax
 
-# Convert Exit Flows to Display Currency (using Final Quarter FX)
 final_fx = df_dash.iloc[last_idx]["FX_Rate"]
 conv_factor_final = 1000 / final_fx if "USD" in currency_mode else 1
 
@@ -288,11 +311,9 @@ df_dash.at[last_idx, "LFCF_Disp"] += exit_inflow_levered_disp
 
 # Annual Aggregation
 df_annual = df_dash.groupby("Global_Year")[["Generation_MWh", "Revenue_Disp", "EBITDA_Disp", "UFCF_Disp", "LFCF_Disp"]].sum().reset_index()
-df_annual["Implied_Price_kWh"] = (df_dash.groupby("Global_Year")["Revenue_M_COP"].sum() * 1000) / df_annual["Generation_MWh"] # Keep price in COP/kWh for reference? 
-# Or convert price to USD/kWh?
+df_annual["Implied_Price_kWh"] = (df_dash.groupby("Global_Year")["Revenue_M_COP"].sum() * 1000) / df_annual["Generation_MWh"]
 if "USD" in currency_mode:
-    # Approx avg price in USD
-    df_annual["Implied_Price_Unit"] = (df_annual["Revenue_Disp"] * 1000) / (df_annual["Generation_MWh"] * 1000) # k USD * 1000 / MWh * 1000 = $/kWh
+    df_annual["Implied_Price_Unit"] = (df_annual["Revenue_Disp"] * 1000) / (df_annual["Generation_MWh"] * 1000) 
 else:
     df_annual["Implied_Price_Unit"] = df_annual["Implied_Price_kWh"].fillna(0)
 
@@ -303,8 +324,6 @@ def get_irr(stream):
         return ((1 + q_irr) ** 4 - 1) * 100
     except: return 0
 
-# Investment amount in Display Currency (Year 0)
-# We use Year 0 FX (Current Rate) for Investment
 inv_conv = 1000 / fx_rate_current if "USD" in currency_mode else 1
 equity_inv_disp = equity_investment_levered_cop * inv_conv
 
@@ -326,7 +345,7 @@ with col_head2:
 k1, k2, k3, k4 = st.columns(4)
 symbol = "$" if "USD" in currency_mode else ""
 k1.metric("Equity Investment", f"{symbol}{equity_inv_disp:,.1f}")
-k2.metric("Year 1 Price", f"${df_annual.iloc[0]['Implied_Price_Unit']:.2f} /kWh") # Shows USD/kWh or COP/kWh
+k2.metric("Year 1 Price", f"${df_annual.iloc[0]['Implied_Price_Unit']:.2f} /kWh")
 k3.metric("Equity IRR", f"{irr_levered:.1f}%")
 k4.metric("Equity NPV", f"{symbol}{npv_equity:,.1f}")
 
@@ -384,71 +403,8 @@ bars = base.mark_bar().encode(
     tooltip=['Global_Year', 'CashFlow']
 )
 
-combined = alt.layer(bars, text).properties(width=350).facet(column=alt.Column('Type', title=None))
-st.altair_chart(combined)
-
-# FULL TABLE
-st.markdown("### 🔎 Full Cash Flow Statement")
-fmt_dict = {
-    "Global_Year": "{:.0f}",
-    "Generation_MWh": "{:,.1f}",
-    "Revenue_Disp": "{:,.1f}",
-    "EBITDA_Disp": "{:,.1f}", 
-    "UFCF_Disp": "{:,.1f}", 
-    "LFCF_Disp": "{:,.1f}"
-}
-st.dataframe(df_annual.style.format(fmt_dict))
-
-# SIMULATION
-st.markdown("---")
-st.header("⚡ 5. Simulation Matrix (Equity IRR)")
-
-with st.expander("Configure Simulation", expanded=True):
-    c_sim1, c_sim2 = st.columns(2)
-    with c_sim1:
-        sim_years = st.slider("Select Range of Exit Years", 1, ppa_term_years, (5, 10))
-    with c_sim2:
-        base_val = int(final_exit_val_cop) if final_exit_val_cop > 0 else 100
-        min_v = st.number_input("Min Asset Value (COP)", value=max(10, base_val - 50))
-        max_v = st.number_input("Max Asset Value (COP)", value=base_val + 50)
-        step_v = st.number_input("Step Size", value=10)
-
-def calculate_sim_irr(y_exit, v_exit_cop):
-    exit_q = construction_quarters + (y_exit * 4)
-    if exit_q > len(df_full): return 0
-    df_slice = df_full.iloc[:exit_q].copy()
-    
-    last_r = df_slice.iloc[-1]
-    gain = v_exit_cop - last_r["Book_Value_M_COP"]
-    tax = gain * cap_gains_rate if gain > 0 else 0
-    net_exit_cop = v_exit_cop - last_r["Debt_Balance_M_COP"] - tax
-    
-    # We calculate IRR on the COP stream directly (IRR is currency-neutral usually)
-    # UNLESS there is significant currency divergence. 
-    # For simplicity, matrix runs on Local Currency IRR to avoid complexity of converting simulation matrix inputs.
-    # If users want USD IRR, they should rely on the main dashboard which handles the full conversion curve.
-    
-    df_slice.at[len(df_slice)-1, "LFCF_M_COP"] += net_exit_cop
-    return get_irr(df_slice["LFCF_M_COP"])
-
-if st.button("▶️ Run Simulation (COP Basis)"):
-    years_to_sim = list(range(sim_years[0], sim_years[1] + 1))
-    vals_to_sim = list(range(int(min_v), int(max_v) + int(step_v), int(step_v)))
-    
-    sim_data = []
-    for v in vals_to_sim:
-        for y in years_to_sim:
-            irr = calculate_sim_irr(y, v)
-            sim_data.append({"Exit Year": y, "Sale Value": v, "IRR": round(irr, 1)})
-    
-    sim_source = pd.DataFrame(sim_data)
-    
-    heatmap = alt.Chart(sim_source).mark_rect().encode(
-        x=alt.X('Sale Value:O', title='Asset Sale Value (M COP)'),
-        y=alt.Y('Exit Year:O', title='Exit Year'),
-        color=alt.Color('IRR:Q', scale=alt.Scale(scheme='redyellowgreen'), title='IRR %'),
-        tooltip=['Exit Year', 'Sale Value', 'IRR']
-    ).properties(title="Equity IRR Sensitivity (COP Basis)")
-    
-    text = heatmap.mark_text(baseline='middle').encode(text='IRR:Q', color=alt.value('black'))
-    st.altair_chart(heatmap + text, use_container_width=True)
+# FIXED CHART: Use single-level layering if faceting is tricky, or just side-by-side
+# Simplest fix for the error: Group bars side-by-side instead of faceting, which is clearer
+combined = alt.Chart(df_melt).mark_bar().encode(
+    x=alt.X('Type:N', title=None, axis=None),
+    y=alt.Y('CashFlow:Q', title=f"Cash Flow ({currency_mode})"),
