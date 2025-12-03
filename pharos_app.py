@@ -112,8 +112,16 @@ LANG = {
         "kpi_eq": "Equity Investment", "kpi_tar": "Start Contract Tariff", "kpi_irr": "Equity IRR", "kpi_npv": "Equity NPV", "kpi_moic": "MOIC", "kpi_cov": "Project Coverage",
         "card_proj": "🏗️ Project (Unlevered)", "card_eq": "🦅 Equity (Levered)", "card_lev": "⚖️ Leverage Boost", "lbl_lev": "Leverage", "lbl_nodebt": "Debt Disabled",
         "rev_proof": "🔎 Revenue Calculation Detail", "chart_cf": "💰 Cash Flow Comparison", "tab_full": "🔎 Full Cash Flow Statement", "tab_pl": "📑 Income Statement (P&L)",
-        "sim_title": "⚡ 5. Simulation Matrix (Equity IRR)", "sim_run": "▶️ Run Simulation", "sim_min": "Min Asset Value", "sim_max": "Max Asset Value", "sim_step": "Step Size", "sim_chart": "Equity IRR Sensitivity",
-        "col_gen": "Generation", "col_rev": "Revenue", "col_price": "Avg Tariff", "col_ftt": "FTT Cost"
+        "sim_title": "⚡ 5. Simulation Matrix (Equity IRR)",
+        "sim_run": "▶️ Run Simulation",
+        "sim_min": "Min Asset Value",
+        "sim_max": "Max Asset Value",
+        "sim_step": "Step Size",
+        "sim_chart": "Equity IRR Sensitivity",
+        "col_gen": "Generation",
+        "col_rev": "Revenue",
+        "col_price": "Avg Tariff",
+        "col_ftt": "FTT Cost"
     },
     "Español": {
         "header_proj": "Nombre del Proyecto", "header_client": "Cliente", "header_loc": "Ubicación",
@@ -196,20 +204,19 @@ st.markdown("---")
 st.sidebar.header(T["curr_title"])
 currency_mode = st.sidebar.radio(T["curr_display"], ["COP (Millions)", "USD (Thousands)"], horizontal=True)
 
-# Define Symbol based on currency mode
+# Define Symbol and Initial Conversion Factor (CRITICAL FOR PDF/DISPLAY)
 symbol = "$" if "USD" in currency_mode else ""
-# Define Inv Conversion Factor early
-inv_conv_factor = 1000 / st.session_state.fx_rate_current if "USD" in currency_mode else 1
+inv_conv_factor_base = 1000 / st.session_state.fx_rate_current if "USD" in currency_mode else 1
 
 with st.sidebar.expander("FX & Macro", expanded=False):
-    fx_rate_current = st.number_input(T["curr_fx"], key="fx_rate_current", value=4100.0, step=50.0, format="%.1f")
+    fx_rate_current = st.number_input(T["curr_fx"], value=4100.0, step=50.0, format="%.1f")
     us_inflation_annual = st.number_input(T["curr_inf"], value=2.5, step=0.1, format="%.1f") / 100
 
 # ==========================================
 # 1. INPUTS
 # ==========================================
 st.sidebar.header(T["s1_title"])
-with st.sidebar.expander(T["s1_time"], expanded=True):
+with st.sidebar.expander(T["s1_time"], expanded=False): # COLLAPSED
     c_start1, c_start2 = st.columns(2)
     with c_start1:
         start_year = st.number_input(T["s1_year"], value=2026, step=1)
@@ -217,7 +224,7 @@ with st.sidebar.expander(T["s1_time"], expanded=True):
         start_q_str = st.selectbox(T["s1_q"], ["Q1", "Q2", "Q3", "Q4"], index=0)
     start_q_num = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}[start_q_str]
 
-with st.sidebar.expander(T["s1_contract"], expanded=False):
+with st.sidebar.expander(T["s1_contract"], expanded=False): # COLLAPSED
     ppa_term_years = st.slider(T["s1_dur"], 5, 20, key="ppa_term")
     current_tariff = st.number_input(f"{T['s1_tariff']} ($/kWh)", key="tariff_val", step=10.0, format="%.1f")
     utility_inflation_annual = st.number_input(T["s1_inf"], key="inf_val", step=0.5, format="%.1f") / 100
@@ -242,7 +249,7 @@ with st.sidebar.expander(T["s1_contract"], expanded=False):
     degradation_annual = st.number_input(T["s1_deg"], key="deg_val", step=0.1, format="%.1f") / 100
 
 st.sidebar.header(T["s2_title"])
-with st.sidebar.expander("CAPEX & OPEX", expanded=False):
+with st.sidebar.expander("CAPEX & OPEX", expanded=False): # COLLAPSED
     construction_quarters = st.slider(T["s2_const"], 0, 8, key="const_q")
     capex_million_cop = st.number_input(f"{T['s2_capex']} (M COP)", key="capex_val", step=10.0, format="%.1f")
     opex_million_cop_annual = st.number_input(f"{T['s2_opex']} (M COP/yr)", key="opex_val", step=0.5, format="%.1f")
@@ -253,11 +260,11 @@ with st.sidebar.expander("CAPEX & OPEX", expanded=False):
     sga_const_pct = st.number_input(T["s2_sgaconst"], key="sga_const_val", step=0.1, format="%.1f", help="SGA as % of CAPEX, capitalized during construction") / 100
     
     sga_const_cost_cop = capex_million_cop * sga_const_pct
-    sga_const_cost_disp = sga_const_cost_cop * (1000 / fx_rate_current if "USD" in currency_mode else 1)
+    sga_const_cost_disp = sga_const_cost_cop * inv_conv_factor_base
     st.write(f"**Cost:** {symbol}{sga_const_cost_disp:,.1f} {currency_mode.split()[0]}")
 
 st.sidebar.header(T["s3_title"])
-with st.sidebar.expander("Fiscal Regime", expanded=False):
+with st.sidebar.expander("Fiscal Regime", expanded=False): # COLLAPSED
     tax_rate = st.number_input(T["s3_tax"], key="tax_val", step=1.0, format="%.1f") / 100
     cap_gains_rate = st.number_input(T["s3_cap"], key="cg_val", step=1.0, format="%.1f") / 100
     depreciation_years = st.slider(T["s3_dep"], 3, 25, key="dep_val")
@@ -275,7 +282,7 @@ with st.sidebar.expander("Fiscal Regime", expanded=False):
         ica_rate = 0.0
 
 st.sidebar.header(T["s4_title"])
-with st.sidebar.expander("Debt Structure", expanded=True):
+with st.sidebar.expander("Debt Structure", expanded=False): # COLLAPSED
     enable_debt = st.checkbox(T["s4_enable"], key="debt_on")
     if enable_debt:
         debt_ratio = st.slider(T["s4_ratio"], 0, 100, key="dr_val") / 100
@@ -291,7 +298,7 @@ with st.sidebar.expander("Debt Structure", expanded=True):
         grace_period_quarters = 0
 
 st.sidebar.header(T["s5_title"])
-with st.sidebar.expander("Valuation", expanded=True):
+with st.sidebar.expander("Valuation", expanded=False): # COLLAPSED
     dash_exit_strategy = st.radio(T["s5_method"], ["Fixed Asset Value", "EBITDA Multiple"], key="exit_method")
     dash_exit_year = st.slider(T["s5_year"], 2, ppa_term_years, key="exit_yr")
     if dash_exit_strategy == "Fixed Asset Value":
@@ -553,7 +560,7 @@ with col_head2:
         pdf.cell(45, 10, f"Eq Inv: {curr_sym}{equity_inv_disp:,.1f}", 1, 0, 'C')
         pdf.cell(45, 10, f"IRR: {irr_levered:.1f}%", 1, 0, 'C')
         pdf.cell(45, 10, f"NPV: {curr_sym}{npv_equity:,.1f}", 1, 0, 'C')
-        pdf.cell(45, 10, f"MOIC: {moic_levered:.1f}x", 1, 1, 'C')
+        pdf.cell(45, 10, f"MOIC: {moic_levered:,.1f}x", 1, 1, 'C')
         pdf.set_font("Arial", size=12)
         pdf.ln(5)
         
@@ -679,7 +686,7 @@ with st.expander("Config", expanded=True):
         base_val = int(final_exit_val_cop) if final_exit_val_cop > 0 else 100
         min_v = st.number_input(f"{T['sim_min']} (COP)", value=max(10, base_val - 50), step=10)
         max_v = st.number_input(f"{T['sim_max']} (COP)", value=base_val + 50, step=10)
-        step_v = st.number_input(T["sim_step"], value=10, step=1)
+        step_v = st.number_input("Step Size", value=10, step=1)
 
 def calculate_sim_irr(y_exit, v_exit_cop):
     exit_q = construction_quarters + (y_exit * 4)
