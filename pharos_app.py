@@ -29,7 +29,25 @@ if not check_password():
     st.stop()
 
 # --- CONFIG ---
-st.set_page_config(page_title="Pharos BTM Model", layout="wide")
+st.set_page_config(page_title="Pharos BTM Model", layout="wide", page_icon="🦅")
+
+# --- CUSTOM STYLING (CSS) ---
+st.markdown("""
+<style>
+    .stApp { background-color: #FFFFFF; }
+    h1, h2, h3 { color: #0E2F44 !important; font-family: 'Helvetica Neue', sans-serif; }
+    [data-testid="stSidebar"] { background-color: #F8F9FB; border-right: 1px solid #E6E9EF; }
+    div[data-testid="stMetric"] {
+        background-color: #FFFFFF; border: 1px solid #E6E9EF;
+        padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center;
+    }
+    div[data-testid="stMetricLabel"] { color: #6E7781; font-size: 14px; font-weight: 500; }
+    div[data-testid="stMetricValue"] { color: #0E2F44; font-size: 26px; font-weight: 700; }
+    hr { margin-top: 1em; margin-bottom: 1em; border: 0; border-top: 2px solid #D4AF37; }
+    div.stButton > button { background-color: #0E2F44; color: white; border-radius: 5px; border: none; padding: 10px 20px; }
+    div.stButton > button:hover { background-color: #1C4E6B; color: white; }
+</style>
+""", unsafe_allow_html=True)
 
 # --- TRANSLATION DICTIONARY ---
 LANG = {
@@ -189,7 +207,7 @@ T = LANG[sel_lang]
 col_logo, col_title = st.columns([1, 4])
 with col_logo:
     try:
-        st.image("logo.jpg", width=150)
+        st.image("logo.png", width=150)
     except:
         st.write("🦅") 
 with col_title:
@@ -447,7 +465,7 @@ agg_cols = ["Generation_MWh", "Revenue_Disp", "OPEX_Disp", "Gross_Disp", "SGA_Di
             "UFCF_Disp", "LFCF_Disp"]
 df_annual = df_dash.groupby("Calendar_Year")[agg_cols].sum().reset_index()
 
-# Price Metric logic
+# FIXED PRICE CALCULATION (CRASH-PROOF)
 df_annual["Implied_Price_Unit"] = 0.0
 mask = df_annual["Generation_MWh"] > 0
 if "USD" in currency_mode:
@@ -553,13 +571,14 @@ pnl_display.index = [
 st.dataframe(pnl_display.style.format("{:,.1f}"))
 
 st.markdown(f"### {T['tab_full']}")
-# CASH FLOW Transposed
+# CASH FLOW Transposed (FIXED INDEX LENGTH)
 cf_cols = ["Calendar_Year", "Generation_MWh", "Revenue_Disp", "OPEX_Disp", "EBITDA_Disp", "UFCF_Disp", "LFCF_Disp"]
 cf_display = df_annual[cf_cols].set_index("Calendar_Year").T
 cf_display.index = [
     "Generation (MWh)", "Revenue", "(-) OPEX", "(=) EBITDA", 
     "Unlevered FCF", "Levered FCF"
 ]
+# Fix index alignment for display
 st.dataframe(cf_display.style.format("{:,.1f}"))
 
 st.markdown("---")
@@ -602,4 +621,3 @@ if st.button(T["sim_run"]):
     
     text = heatmap.mark_text(baseline='middle').encode(text='IRR:Q', color=alt.value('black'))
     st.altair_chart(heatmap + text, use_container_width=True)
-
