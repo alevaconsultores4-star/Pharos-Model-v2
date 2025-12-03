@@ -686,7 +686,7 @@ with st.expander("Config", expanded=True):
         base_val = int(final_exit_val_cop) if final_exit_val_cop > 0 else 100
         min_v = st.number_input(f"{T['sim_min']} (COP)", value=max(10, base_val - 50), step=10)
         max_v = st.number_input(f"{T['sim_max']} (COP)", value=base_val + 50, step=10)
-        step_v = st.number_input("Step Size", value=10, step=1)
+        step_v = st.number_input(T["sim_step"], value=10, step=1)
 
 def calculate_sim_irr(y_exit, v_exit_cop):
     exit_q = construction_quarters + (y_exit * 4)
