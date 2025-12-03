@@ -5,6 +5,7 @@ import numpy_financial as npf
 import altair as alt
 import os
 from fpdf import FPDF
+from io import BytesIO
 
 # --- PASSWORD PROTECTION ---
 def check_password():
@@ -73,12 +74,10 @@ def set_base_case():
     st.session_state.exit_mult_val = 5.0
     st.session_state.exit_asset_val = 10.0
     st.session_state.ke_val = 12.0
+    st.session_state.uploaded_files = [] 
 
 if "ppa_term" not in st.session_state:
     set_base_case()
-
-# --- CONFIG ---
-st.set_page_config(page_title="Pharos BTM Model", layout="wide", page_icon="🦅")
 
 # --- CUSTOM STYLING ---
 st.markdown("""
@@ -124,7 +123,8 @@ LANG = {
         "col_gen": "Generation",
         "col_rev": "Revenue",
         "col_price": "Avg Tariff",
-        "col_ftt": "FTT Cost"
+        "col_ftt": "FTT Cost",
+        "s6_title": "6. Document Audit Trail"
     },
     "Español": {
         "header_proj": "Nombre del Proyecto", "header_client": "Cliente", "header_loc": "Ubicación",
@@ -167,7 +167,8 @@ LANG = {
         "col_gen": "Generación",
         "col_rev": "Ingresos",
         "col_price": "Tarifa Prom",
-        "col_ftt": "Costo 4x1000"
+        "col_ftt": "Costo 4x1000",
+        "s6_title": "6. Registro de Documentos"
     }
 }
 
@@ -219,7 +220,7 @@ with st.sidebar.expander("FX & Macro", expanded=False):
 # 1. INPUTS
 # ==========================================
 st.sidebar.header(T["s1_title"])
-with st.sidebar.expander(T["s1_time"], expanded=False): 
+with st.sidebar.expander(T["s1_time"], expanded=False): # COLLAPSED
     c_start1, c_start2 = st.columns(2)
     with c_start1:
         start_year = st.number_input(T["s1_year"], value=2026, step=1)
@@ -227,7 +228,7 @@ with st.sidebar.expander(T["s1_time"], expanded=False):
         start_q_str = st.selectbox(T["s1_q"], ["Q1", "Q2", "Q3", "Q4"], index=0)
     start_q_num = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}[start_q_str]
 
-with st.sidebar.expander(T["s1_contract"], expanded=False): 
+with st.sidebar.expander(T["s1_contract"], expanded=False): # COLLAPSED
     ppa_term_years = st.slider(T["s1_dur"], 5, 20, key="ppa_term")
     current_tariff = st.number_input(f"{T['s1_tariff']} ($/kWh)", key="tariff_val", step=10.0, format="%.1f")
     utility_inflation_annual = st.number_input(T["s1_inf"], key="inf_val", step=0.5, format="%.1f") / 100
@@ -262,6 +263,7 @@ with st.sidebar.expander("CAPEX & OPEX", expanded=False): # COLLAPSED
     # SGA During Construction Cost
     sga_const_pct = st.number_input(T["s2_sgaconst"], key="sga_const_val", step=0.1, format="%.1f", help="SGA as % of CAPEX, capitalized during construction") / 100
     
+    # FIX: Calculate SGA Cost early for display and engine initialization
     sga_const_cost_cop = capex_million_cop * sga_const_pct
     sga_const_cost_disp = sga_const_cost_cop * inv_conv_factor_base
     st.write(f"**Cost:** {symbol}{sga_const_cost_disp:,.1f} {currency_mode.split()[0]}")
@@ -313,25 +315,46 @@ with st.sidebar.expander("Valuation", expanded=False): # COLLAPSED
     st.markdown("---")
     investor_disc_rate = st.number_input(T["s5_ke"], key="ke_val", step=0.5, format="%.1f") / 100
 
+st.sidebar.header(T["s6_title"])
+uploaded_files = st.sidebar.file_uploader(
+    "Upload Source Documents (PDFs, Images, CSVs)",
+    type=['pdf', 'png', 'jpg', 'jpeg', 'csv'],
+    accept_multiple_files=True
+)
+
+if uploaded_files:
+    if 'uploaded_files' not in st.session_state:
+        st.session_state['uploaded_files'] = []
+    
+    for file in uploaded_files:
+        file_info = {
+            "name": file.name,
+            "type": file.type,
+            "data": file.read() 
+        }
+        if file_info['name'] not in [f['name'] for f in st.session_state['uploaded_files']]:
+             st.session_state['uploaded_files'].append(file_info)
+
+
 # --- ENGINE ---
 full_quarters = construction_quarters + (ppa_term_years * 4)
 quarters_range = list(range(1, full_quarters + 1))
 
-# Initial Capitalization
-sga_const_cost = capex_million_cop * sga_const_pct
 if enable_debt:
     structuring_fee = (capex_million_cop * debt_ratio) * structuring_fee_pct
     total_debt_principal = capex_million_cop * debt_ratio
+    interest_rate_annual = st.session_state.int_val / 100
     interest_rate_quarterly = interest_rate_annual / 4
     loan_tenor_quarters = loan_tenor_years * 4
     quarterly_debt_pmt = -npf.pmt(interest_rate_quarterly, loan_tenor_quarters - grace_period_quarters, total_debt_principal) if (loan_tenor_quarters - grace_period_quarters) > 0 else 0
 else:
     structuring_fee = 0
     total_debt_principal = 0
-    interest_rate_quarterly = 0
+    interest_rate_annual = 0.0
+    interest_rate_quarterly = 0.0
     quarterly_debt_pmt = 0
 
-total_capex_cost = capex_million_cop + structuring_fee + sga_const_cost
+total_capex_cost = capex_million_cop + structuring_fee + sga_const_cost_cop
 equity_investment_levered_cop = total_capex_cost - total_debt_principal
 equity_investment_unlevered_cop = total_capex_cost 
 
@@ -384,7 +407,7 @@ for i, q in enumerate(quarters_range):
     if phase == "Construction" and construction_quarters > 0:
         capex_unlevered = capex_million_cop / construction_quarters
         capex_levered = equity_investment_levered_cop / construction_quarters
-        sga_const_outflow = sga_const_cost / construction_quarters
+        sga_const_outflow = sga_const_cost_cop / construction_quarters
         capex_levered += sga_const_outflow
     else:
         capex_unlevered, capex_levered, sga_const_outflow = 0, 0, 0
@@ -621,12 +644,43 @@ with c3:
 
 st.divider()
 
-with st.expander(T["rev_proof"], expanded=True):
+# --- DOCUMENT AUDIT TRAIL DISPLAY ---
+with st.expander(T["s6_title"], expanded=False): 
+    if st.session_state.uploaded_files:
+        st.markdown("##### Currently Uploaded Documents")
+        
+        col_count = min(4, len(st.session_state.uploaded_files))
+        col_list = st.columns(col_count)
+        
+        for idx, file_info in enumerate(st.session_state.uploaded_files):
+            col = col_list[idx % col_count]
+            
+            col.caption(file_info['name'])
+            
+            # Display logic for image/pdf/csv audit
+            if file_info['type'].startswith('image') or 'pdf' in file_info['type']:
+                col.download_button(
+                    label=f"Download {file_info['name']}",
+                    data=file_info['data'],
+                    file_name=file_info['name'],
+                    mime=file_info['type']
+                )
+            elif file_info['type'] == 'text/csv':
+                col.dataframe(pd.read_csv(BytesIO(file_info['data'])).head(5), use_container_width=True)
+            else:
+                col.warning("Unsupported preview format.")
+            
+    else:
+        st.info("No source documents uploaded. Use the sidebar to upload CAPEX/OPEX/Simulation files for auditing.")
+
+st.divider()
+
+with st.expander(T["rev_proof"], expanded=False):
     st.write("Revenue Proof: **Generation (MWh) × Price ($/kWh) = Revenue (M/kUSD)**")
-    proof_df = df_annual_dash[["Calendar_Year", "Generation_MWh", "Implied_Price_Unit", "Revenue_Disp"]].copy()
-    proof_df.columns = ["Year", T["col_gen"], T["col_price"], T["col_rev"]]
+    proof_df = df_annual_dash[["Calendar_Year", "Generation_MWh", "Revenue_Disp"]].copy()
+    proof_df.columns = ["Year", T["col_gen"], T["col_rev"]]
     st.dataframe(proof_df.style.format({
-        "Year": "{:.0f}", T["col_gen"]: "{:,.1f}", T["col_price"]: "${:,.2f}", T["col_rev"]: "{:,.1f}"
+        "Year": "{:.0f}", T["col_gen"]: "{:,.1f}", T["col_rev"]: "{:,.1f}"
     }))
 
 st.markdown(f"##### {T['chart_cf']}")
@@ -641,7 +695,7 @@ bars = base.mark_bar().encode(
     tooltip=['Calendar_Year', 'Type', 'CashFlow']
 )
 text = base.mark_text(dy=-10).encode(text=alt.Text('CashFlow:Q', format='.1f'), color=alt.value('black'))
-chart = alt.layer(bars, text).properties(width=55).facet(
+chart = alt.layer(bars, text).properties(width=65).facet(
     column=alt.Column('Calendar_Year:O', title="Year", header=alt.Header(labelAngle=0, labelAlign='center'))
 )
 st.altair_chart(chart)
