@@ -77,6 +77,9 @@ def set_base_case():
 if "ppa_term" not in st.session_state:
     set_base_case()
 
+# --- CONFIG ---
+st.set_page_config(page_title="Pharos BTM Model", layout="wide", page_icon="🦅")
+
 # --- CUSTOM STYLING ---
 st.markdown("""
 <style>
@@ -216,7 +219,7 @@ with st.sidebar.expander("FX & Macro", expanded=False):
 # 1. INPUTS
 # ==========================================
 st.sidebar.header(T["s1_title"])
-with st.sidebar.expander(T["s1_time"], expanded=False): # COLLAPSED
+with st.sidebar.expander(T["s1_time"], expanded=False): 
     c_start1, c_start2 = st.columns(2)
     with c_start1:
         start_year = st.number_input(T["s1_year"], value=2026, step=1)
@@ -224,7 +227,7 @@ with st.sidebar.expander(T["s1_time"], expanded=False): # COLLAPSED
         start_q_str = st.selectbox(T["s1_q"], ["Q1", "Q2", "Q3", "Q4"], index=0)
     start_q_num = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}[start_q_str]
 
-with st.sidebar.expander(T["s1_contract"], expanded=False): # COLLAPSED
+with st.sidebar.expander(T["s1_contract"], expanded=False): 
     ppa_term_years = st.slider(T["s1_dur"], 5, 20, key="ppa_term")
     current_tariff = st.number_input(f"{T['s1_tariff']} ($/kWh)", key="tariff_val", step=10.0, format="%.1f")
     utility_inflation_annual = st.number_input(T["s1_inf"], key="inf_val", step=0.5, format="%.1f") / 100
@@ -501,6 +504,8 @@ irr_levered = get_irr(df_dash["LFCF_Disp"])
 moic_levered = df_dash["LFCF_Disp"].sum() / equity_inv_disp if equity_inv_disp > 0 else 0
 npv_equity = npf.npv(investor_disc_rate / 4, [0] + df_dash["LFCF_Disp"].tolist())
 
+symbol = "$" if "USD" in currency_mode else ""
+
 # --- OUTPUT ---
 col_head1, col_head2 = st.columns([3, 1])
 with col_head1:
@@ -617,11 +622,11 @@ with c3:
 st.divider()
 
 with st.expander(T["rev_proof"], expanded=True):
-    st.write("Revenue Proof")
-    proof_df = df_annual_dash[["Calendar_Year", "Generation_MWh", "Revenue_Disp"]].copy()
-    proof_df.columns = ["Year", T["col_gen"], T["col_rev"]]
+    st.write("Revenue Proof: **Generation (MWh) × Price ($/kWh) = Revenue (M/kUSD)**")
+    proof_df = df_annual_dash[["Calendar_Year", "Generation_MWh", "Implied_Price_Unit", "Revenue_Disp"]].copy()
+    proof_df.columns = ["Year", T["col_gen"], T["col_price"], T["col_rev"]]
     st.dataframe(proof_df.style.format({
-        "Year": "{:.0f}", T["col_gen"]: "{:,.1f}", T["col_rev"]: "{:,.1f}"
+        "Year": "{:.0f}", T["col_gen"]: "{:,.1f}", T["col_price"]: "${:,.2f}", T["col_rev"]: "{:,.1f}"
     }))
 
 st.markdown(f"##### {T['chart_cf']}")
@@ -684,7 +689,7 @@ with st.expander("Config", expanded=True):
         base_val = int(final_exit_val_cop) if final_exit_val_cop > 0 else 100
         min_v = st.number_input(f"{T['sim_min']} (COP)", value=max(10, base_val - 50), step=10)
         max_v = st.number_input(f"{T['sim_max']} (COP)", value=base_val + 50, step=10)
-        step_v = st.number_input(T["sim_step"], value=10, step=1)
+        step_v = st.number_input("Step Size", value=10, step=1)
 
 def calculate_sim_irr(y_exit, v_exit_cop):
     exit_q = construction_quarters + (y_exit * 4)
