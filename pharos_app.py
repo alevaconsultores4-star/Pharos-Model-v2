@@ -207,7 +207,7 @@ T = LANG[sel_lang]
 col_logo, col_title = st.columns([1, 4])
 with col_logo:
     try:
-        st.image("logo.png", width=150)
+        st.image("logo.jpg", width=150)
     except:
         st.write("🦅") 
 with col_title:
@@ -621,3 +621,4 @@ if st.button(T["sim_run"]):
     
     text = heatmap.mark_text(baseline='middle').encode(text='IRR:Q', color=alt.value('black'))
     st.altair_chart(heatmap + text, use_container_width=True)
+
