@@ -79,6 +79,10 @@ def set_base_case():
 if "ppa_term" not in st.session_state:
     set_base_case()
 
+# Scenario storage (persists during session)
+if "scenarios" not in st.session_state:
+    st.session_state["scenarios"] = {}
+
 # --- CUSTOM STYLING ---
 st.markdown("""
 <style>
@@ -544,6 +548,39 @@ npv_equity = npf.npv(investor_disc_rate / 4, [0] + df_dash["LFCF_Disp"].tolist()
 symbol = "$" if "USD" in currency_mode else ""
 
 # ==========================================
+# SCENARIO SAVE / MANAGE
+# ==========================================
+st.markdown("### Scenario Management")
+
+scenario_name = st.text_input(
+    "Scenario name (e.g. 'Base COP with debt 70%')",
+    value="",
+    key="scenario_name"
+)
+
+if st.button("💾 Save current scenario"):
+    if not scenario_name.strip():
+        st.warning("Please enter a scenario name before saving.")
+    else:
+        st.session_state["scenarios"][scenario_name] = {
+            "Currency": currency_mode,
+            "Equity_Investment": equity_inv_disp,
+            "IRR_Levered_%": irr_levered,
+            "IRR_Unlevered_%": irr_unlevered,
+            "MOIC_x": moic_levered,
+            "NPV_Equity": npv_equity,
+            "Coverage_%": coverage_pct,
+            "Debt_%": debt_ratio * 100,
+            "Exit_Method": dash_exit_strategy,
+            "Exit_Year": dash_exit_year,
+            "Exit_Value_M_COP": final_exit_val_cop,
+            "Start_Year": start_year,
+            "Start_Q": start_q_str,
+            "Tariff_$perkWh": current_tariff,
+        }
+        st.success(f"Scenario '{scenario_name}' saved.")
+
+# ==========================================
 # OUTPUT - TOP KPIs & PDF
 # ==========================================
 col_head1, col_head2 = st.columns([3, 1])
@@ -635,6 +672,7 @@ with col_head2:
     st.download_button(label="📄 Download PDF Report", data=pdf_bytes,
                        file_name="pharos_memo.pdf", mime="application/pdf")
 
+# KPI cards
 k1, k2, k3, k4 = st.columns(4)
 k1.metric(T["kpi_eq"], f"{symbol}{equity_inv_disp:,.1f}")
 start_p = current_tariff * (1 - discount_rate)
@@ -645,6 +683,34 @@ k3.metric(T["kpi_irr"], f"{irr_levered:.1f}%")
 k4.metric(T["kpi_npv"], f"{symbol}{npv_equity:,.1f}")
 
 st.divider()
+
+# SCENARIO COMPARISON TABLE
+if st.session_state["scenarios"]:
+    st.markdown("### Saved Scenarios Comparison")
+
+    df_scen = pd.DataFrame.from_dict(
+        st.session_state["scenarios"],
+        orient="index"
+    )
+    df_scen.index.name = "Scenario"
+    df_scen.reset_index(inplace=True)
+
+    st.dataframe(
+        df_scen.style.format({
+            "Equity_Investment": "{:,.1f}",
+            "IRR_Levered_%": "{:,.1f}",
+            "IRR_Unlevered_%": "{:,.1f}",
+            "MOIC_x": "{:,.2f}",
+            "NPV_Equity": "{:,.1f}",
+            "Coverage_%": "{:,.1f}",
+            "Debt_%": "{:,.1f}",
+            "Exit_Value_M_COP": "{:,.1f}",
+            "Tariff_$perkWh": "{:,.1f}",
+        }),
+        use_container_width=True
+    )
+else:
+    st.markdown("_No scenarios saved yet. Use **'Save current scenario'** above to store one._")
 
 c1, c2, c3 = st.columns(3)
 with c1:
