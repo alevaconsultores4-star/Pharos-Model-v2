@@ -7,6 +7,8 @@ import os
 from fpdf import FPDF
 from io import BytesIO
 
+st.set_page_config(layout="wide") 
+
 # --- PASSWORD PROTECTION ---
 def check_password():
     """Returns `True` if the user had the correct password."""
@@ -744,3 +746,4 @@ if st.button(T["sim_run"]):
     
     text = heatmap.mark_text(baseline='middle').encode(text='IRR:Q', color=alt.value('black'))
     st.altair_chart(heatmap + text, use_container_width=True)
+
