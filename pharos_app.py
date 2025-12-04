@@ -1263,7 +1263,7 @@ if st.session_state["scenarios"]:
     df_scen = df_scen[cols_order]
 
 
-        st.dataframe(
+    st.dataframe(
         df_scen.style.format({
             "PPA_Years": "{:.0f}",              # 🔹 NEW
             "Equity_Investment": "{:,.1f}",
@@ -1528,6 +1528,7 @@ if st.button(T["sim_run"]):
     # Store for PDF
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
 
 
