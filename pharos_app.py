@@ -894,6 +894,7 @@ if st.button("💾 Save current scenario"):
     if not scenario_name.strip():
         st.warning("Please enter a scenario name before saving.")
     else:
+        ppa_price_year1_cop = current_tariff * (1 - discount_rate)
         st.session_state["scenarios"][scenario_name] = {
             "Equity_Investment": equity_inv_disp,
             "IRR_Levered_%": irr_levered,
@@ -1528,6 +1529,7 @@ if st.button(T["sim_run"]):
     # Store for PDF
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
 
 
