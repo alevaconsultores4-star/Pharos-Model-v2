@@ -902,9 +902,11 @@ if st.button("💾 Save current scenario"):
             "Exit_Year": dash_exit_year,
             "Exit_Value_M_COP": final_exit_val_cop,
             "Tariff_$perkWh": current_tariff,
+            "PPA_Years": ppa_term_years,          # 🔹 NEW
         }
         save_scenarios_to_disk()
         st.success(f"Scenario '{scenario_name}' saved.")
+
 
 # --- Delete scenario ---
 if st.session_state["scenarios"]:
@@ -1512,3 +1514,4 @@ if st.button(T["sim_run"]):
     # Store for PDF
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
