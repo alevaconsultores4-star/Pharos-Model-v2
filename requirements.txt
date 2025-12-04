@@ -4,3 +4,4 @@ numpy
 numpy-financial
 altair
 fpdf
+matplotlib
