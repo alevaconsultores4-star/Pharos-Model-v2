@@ -901,7 +901,7 @@ if st.button("💾 Save current scenario"):
             "Exit_Method": dash_exit_strategy,
             "Exit_Year": dash_exit_year,
             "Exit_Value_M_COP": final_exit_val_cop,
-            "Tariff_$perkWh": current_tariff,
+            "PPA_Year1_$perkWh": ppa_price_year1_cop,
             "PPA_Years": ppa_term_years,          
         }
         save_scenarios_to_disk()
@@ -1248,14 +1248,18 @@ if st.session_state["scenarios"]:
         "Exit_Method",
         "Exit_Year",
         "Exit_Value_M_COP",
-        "Tariff_$perkWh",
+        "PPA_Year1_$perkWh",
     ]
 
     # Make sure all columns exist (old scenarios won’t have PPA_Years)
     for col in cols_order:
         if col not in df_scen.columns:
             df_scen[col] = np.nan
-
+    if "PPA_Year1_$perkWh" in df_scen.columns and "Tariff_$perkWh" in df_scen.columns:
+        df_scen["PPA_Year1_$perkWh"] = df_scen["PPA_Year1_$perkWh"].fillna(
+            df_scen["Tariff_$perkWh"]
+        )
+        
     df_scen = df_scen[cols_order]
 
 
@@ -1267,7 +1271,7 @@ if st.session_state["scenarios"]:
             "MOIC_x": "{:,.2f}",
             "Exit_Year": "{:.0f}",
             "Exit_Value_M_COP": "{:,.1f}",
-            "Tariff_$perkWh": "{:,.1f}",
+            "PPA_Year1_$perkWh": "{:,.1f}",
         }),
         use_container_width=True
     )
@@ -1524,5 +1528,6 @@ if st.button(T["sim_run"]):
     # Store for PDF
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
 
