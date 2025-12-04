@@ -902,7 +902,7 @@ if st.button("💾 Save current scenario"):
             "Exit_Year": dash_exit_year,
             "Exit_Value_M_COP": final_exit_val_cop,
             "Tariff_$perkWh": current_tariff,
-            "PPA_Years": ppa_term_years,          # 🔹 NEW
+            "PPA_Years": ppa_term_years,          
         }
         save_scenarios_to_disk()
         st.success(f"Scenario '{scenario_name}' saved.")
@@ -1241,6 +1241,7 @@ if st.session_state["scenarios"]:
 
     cols_order = [
         "Scenario",
+        "PPA_Years",          # 🔹 NEW COLUMN
         "Equity_Investment",
         "IRR_Levered_%",
         "MOIC_x",
@@ -1249,10 +1250,18 @@ if st.session_state["scenarios"]:
         "Exit_Value_M_COP",
         "Tariff_$perkWh",
     ]
+
+    # Make sure all columns exist (old scenarios won’t have PPA_Years)
+    for col in cols_order:
+        if col not in df_scen.columns:
+            df_scen[col] = np.nan
+
     df_scen = df_scen[cols_order]
 
-    st.dataframe(
+
+        st.dataframe(
         df_scen.style.format({
+            "PPA_Years": "{:.0f}",              # 🔹 NEW
             "Equity_Investment": "{:,.1f}",
             "IRR_Levered_%": "{:,.1f}",
             "MOIC_x": "{:,.2f}",
@@ -1262,6 +1271,7 @@ if st.session_state["scenarios"]:
         }),
         use_container_width=True
     )
+
 else:
     st.markdown("_No scenarios saved yet. Use **'Save current scenario'** above to store one._")
 
@@ -1514,4 +1524,5 @@ if st.button(T["sim_run"]):
     # Store for PDF
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
