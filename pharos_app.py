@@ -4,12 +4,23 @@ import numpy as np
 import numpy_financial as npf
 import altair as alt
 import os
+import json
+import matplotlib.pyplot as plt
+import tempfile
+
 from fpdf import FPDF
 
-# Page config - wide layout
+# ------------------------------------------------------
+# CONFIG & CONSTANTS
+# ------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Pharos Capital: BTM Model", page_icon="🦅")
 
-# --- PASSWORD PROTECTION ---
+SCENARIO_FILE = "pharos_scenarios.json"
+
+
+# ------------------------------------------------------
+# PASSWORD PROTECTION
+# ------------------------------------------------------
 def check_password():
     """Returns `True` if the user had the correct password."""
     def password_entered():
@@ -27,19 +38,25 @@ def check_password():
             st.caption("Please upload 'logo.jpg' for full branding.")
         st.markdown("---")
         st.markdown("### Access Required")
-        st.text_input("Enter Password", type="password", on_change=password_entered, key="password")
+        st.text_input("Enter Password", type="password",
+                      on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
-        st.text_input("Enter Password", type="password", on_change=password_entered, key="password")
+        st.text_input("Enter Password", type="password",
+                      on_change=password_entered, key="password")
         st.error("😕 Password incorrect")
         return False
     else:
         return True
 
+
 if not check_password():
     st.stop()
 
-# --- 1. SESSION STATE & RESET LOGIC ---
+
+# ------------------------------------------------------
+# SESSION STATE & RESET LOGIC
+# ------------------------------------------------------
 def set_base_case():
     st.session_state.ppa_term = 10
     st.session_state.link_inf = True
@@ -76,14 +93,41 @@ def set_base_case():
     st.session_state.uploaded_files = []
     st.session_state.fx_rate_current = 4100.0
 
+
 if "ppa_term" not in st.session_state:
     set_base_case()
 
-# Scenario storage (persists during session)
-if "scenarios" not in st.session_state:
-    st.session_state["scenarios"] = {}
 
-# --- CUSTOM STYLING ---
+# ------------------------------------------------------
+# SCENARIO PERSISTENCE (DISK)
+# ------------------------------------------------------
+def load_scenarios_from_disk():
+    if os.path.exists(SCENARIO_FILE):
+        try:
+            with open(SCENARIO_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return {}
+
+
+def save_scenarios_to_disk():
+    try:
+        with open(SCENARIO_FILE, "w", encoding="utf-8") as f:
+            json.dump(st.session_state["scenarios"], f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.warning(f"Could not save scenarios to disk: {e}")
+
+
+if "scenarios" not in st.session_state:
+    st.session_state["scenarios"] = load_scenarios_from_disk()
+
+
+# ------------------------------------------------------
+# CUSTOM STYLING
+# ------------------------------------------------------
 st.markdown("""
 <style>
     .stApp { background-color: #FFFFFF; }
@@ -101,91 +145,192 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- TRANSLATION DICTIONARY ---
+
+# ------------------------------------------------------
+# TRANSLATION DICTIONARY
+# ------------------------------------------------------
 LANG = {
     "English": {
         "header_proj": "Project Name", "header_client": "Client Name", "header_loc": "Location",
-        "curr_title": "0. Currency & FX", "curr_display": "Display Currency", "curr_fx": "Current FX Rate (COP/USD)", "curr_inf": "US Inflation (Annual %)",
-        "s1_title": "1. Timeline & Revenue", "s1_time": "Project Timeline", "s1_year": "Start Year", "s1_q": "Start Quarter",
-        "s1_contract": "Contract Details", "s1_dur": "PPA Duration (Years)", "s1_tariff": "Current Tariff", "s1_inf": "Utility Inflation (Annual %)",
-        "s1_disc": "Discount to Client (%)", "s1_link": "Index PPA Price to Inflation?", "s1_lock": "Escalator locked to Inflation", "s1_esc": "PPA Escalator (Annual %)",
-        "s1_tech": "Technical & Generation", "s1_mod": "Modules", "s1_pow": "Module Power (W)", "s1_deg": "Degradation (Annual %)",
-        "s1_gen_lbl": "Contracted Energy (MWh/yr)", "s1_cons": "Client Total Consumption (MWh/yr)",
-        "s2_title": "2. Costs", "s2_const": "Construction Period (Quarters)", "s2_capex": "Total CAPEX", "s2_opex": "Annual OPEX", "s2_oinf": "OPEX Inflation (Annual %)", "s2_sga": "SGA (% of Gross Profit)", "s2_sgaconst": "SGA During Construction (%)",
-        "s3_title": "3. Tax", "s3_tax": "Corporate Income Tax (%)", "s3_cap": "Capital Gains Tax (%)", "s3_dep": "Depreciation Term (Years)", "s3_dut": "Duties and Others", "s3_ftt": "4x1000 FTT Rate (%)", "s3_ica": "Include ICA Tax (2%)?", "s3_ica_rate": "ICA Rate (%)",
-        "s4_title": "4. Financing", "s4_enable": "Include Debt?", "s4_ratio": "Debt Ratio (%)", "s4_int": "Interest Rate (Annual %)", "s4_tenor": "Loan Tenor (Years)", "s4_fee": "Structuring Fee (%)", "s4_grace": "Grace Period (Quarters)",
-        "s5_title": "5. Scenario", "s5_method": "Exit Method", "s5_year": "Exit Year", "s5_val": "Asset Sale Value", "s5_mult": "Valuation Multiple (x EBITDA)", "s5_ke": "Investor Discount Rate (Ke %)",
-        "kpi_eq": "Equity Investment", "kpi_tar": "Start Contract Tariff", "kpi_irr": "Equity IRR", "kpi_npv": "Equity NPV", "kpi_moic": "MOIC", "kpi_cov": "Project Coverage",
-        "card_proj": "🏗️ Project (Unlevered)", "card_eq": "🦅 Equity (Levered)", "card_lev": "⚖️ Leverage Boost", "lbl_lev": "Leverage", "lbl_nodebt": "Debt Disabled",
-        "rev_proof": "🔎 Revenue Calculation Detail", "chart_cf": "💰 Cash Flow Comparison", "tab_full": "🔎 Full Cash Flow Statement", "tab_pl": "📑 Income Statement (P&L)",
-        "sim_title": "⚡ 5. Simulation Matrix (Equity IRR)",
+        "curr_title": "0. Currency & FX", "curr_display": "Display Currency",
+        "curr_fx": "Current FX Rate (COP/USD)", "curr_inf": "US Inflation (Annual %)",
+
+        "s1_title": "1. Timeline & Revenue", "s1_time": "Project Timeline",
+        "s1_year": "Start Year", "s1_q": "Start Quarter",
+        "s1_contract": "Contract Details", "s1_dur": "PPA Duration (Years)",
+        "s1_tariff": "Current Tariff", "s1_inf": "Utility Inflation (Annual %)",
+        "s1_disc": "Discount to Client (%)", "s1_link": "Index PPA Price to Inflation?",
+        "s1_lock": "Escalator locked to Inflation", "s1_esc": "PPA Escalator (Annual %)",
+        "s1_tech": "Technical & Generation", "s1_mod": "Modules",
+        "s1_pow": "Module Power (W)", "s1_deg": "Degradation (Annual %)",
+        "s1_gen_lbl": "Contracted Energy (MWh/yr)",
+        "s1_cons": "Client Total Consumption (MWh/yr)",
+
+        "s2_title": "2. Costs", "s2_const": "Construction Period (Quarters)",
+        "s2_capex": "Total CAPEX", "s2_opex": "Annual OPEX",
+        "s2_oinf": "OPEX Inflation (Annual %)",
+        "s2_sga": "SGA (% of Gross Profit)",
+        "s2_sgaconst": "SGA During Construction (%)",
+
+        "s3_title": "3. Tax", "s3_tax": "Corporate Income Tax (%)",
+        "s3_cap": "Capital Gains Tax (%)",
+        "s3_dep": "Depreciation Term (Years)",
+        "s3_dut": "Duties and Others",
+        "s3_ftt": "4x1000 FTT Rate (%)",
+        "s3_ica": "Include ICA Tax (2%)?",
+        "s3_ica_rate": "ICA Rate (%)",
+        "s3_capex_ben": "Apply CAPEX Tax Benefit (Law 1715, 50% of CAPEX)?",
+        "s3_capex_years": "Benefit Window (Years after COD, max 15)",
+        "s3_capex_pct": "Eligible CAPEX for Benefit (%)",
+
+        "s4_title": "4. Financing", "s4_enable": "Include Debt?",
+        "s4_ratio": "Debt Ratio (%)", "s4_int": "Interest Rate (Annual %)",
+        "s4_tenor": "Loan Tenor (Years)", "s4_fee": "Structuring Fee (%)",
+        "s4_grace": "Grace Period (Quarters)",
+
+        "s5_title": "5. Scenario", "s5_method": "Exit Method",
+        "s5_year": "Exit Year", "s5_val": "Asset Sale Value (M COP)",
+        "s5_mult": "Valuation Multiple (x EBITDA)",
+        "s5_ke": "Investor Discount Rate (Ke %)",
+
+        "kpi_eq": "Equity Investment", "kpi_tar": "Start Contract Tariff",
+        "kpi_irr": "Equity IRR", "kpi_npv": "Equity NPV",
+        "kpi_moic": "MOIC", "kpi_cov": "Project Coverage",
+
+        "card_proj": "🏗️ Project (Unlevered)",
+        "card_eq": "🦅 Equity (Levered)",
+        "card_lev": "⚖️ Leverage Boost",
+        "lbl_lev": "Leverage",
+        "lbl_nodebt": "Debt Disabled",
+
+        "rev_proof": "🔎 Revenue Calculation Detail",
+        "chart_cf": "💰 Cash Flow Comparison",
+        "tab_full": "🔎 Full Cash Flow Statement",
+        "tab_pl": "📑 Income Statement (P&L)",
+
+        "sim_title": "⚡ 5. Simulation Matrix - Equity IRR Sensitivity for Client Asset Buy-Back (Asset Value Sale Back vs. Sale Year)",
         "sim_run": "▶️ Run Simulation",
         "sim_min": "Min Asset Value",
         "sim_max": "Max Asset Value",
         "sim_step": "Step Size",
-        "sim_chart": "Equity IRR Sensitivity",
+        "sim_chart": "Equity IRR Sensitivity for Buy-Back Scenario",
+        "sim_match_title": "Simulation points with IRR close to base case",
+
         "col_gen": "Generation",
         "col_rev": "Revenue",
         "col_price": "Avg Tariff",
         "col_ftt": "FTT Cost",
+
         "s6_title": "6. Document Audit Trail"
     },
     "Español": {
-        "header_proj": "Nombre del Proyecto", "header_client": "Cliente", "header_loc": "Ubicación",
-        "curr_title": "0. Moneda y TRM", "curr_display": "Moneda Visual", "curr_fx": "TRM Actual (COP/USD)", "curr_inf": "Inflación USA (Anual %)",
-        "s1_title": "1. Plazos e Ingresos", "s1_time": "Cronograma", "s1_year": "Año Inicio", "s1_q": "Trimestre Inicio",
-        "s1_contract": "Detalles del Contrato", "s1_dur": "Duración PPA (Años)", "s1_tariff": "Tarifa Actual", "s1_inf": "Inflación Servicios (Anual %)",
-        "s1_disc": "Descuento al Cliente (%)", "s1_link": "¿Indexar PPA a Inflación?", "s1_lock": "Escalador atado a Inflación", "s1_esc": "Escalador PPA (Anual %)",
-        "s1_tech": "Técnico y Generación", "s1_mod": "Módulos", "s1_pow": "Potencia Módulo (W)", "s1_deg": "Degradación (Anual %)",
-        "s1_gen_lbl": "Energía Contratada (MWh/año)", "s1_cons": "Consumo Total Cliente (MWh/año)",
-        "s2_title": "2. Costos", "s2_const": "Periodo Construcción (Trimestres)", "s2_capex": "CAPEX Total", "s2_opex": "OPEX Anual", "s2_oinf": "Inflación OPEX (Anual %)", "s2_sga": "SGA (% de Utilidad Bruta)", "s2_sgaconst": "SGA Durante Construcción (%)",
-        "s3_title": "3. Impuestos", "s3_tax": "Impuesto de Renta (%)", "s3_cap": "Ganancia Ocasional (%)", "s3_dep": "Plazo Depreciación (Años)", "s3_dut": "Gravámenes y Otros", "s3_ftt": "Tasa 4x1000 (%)", "s3_ica": "¿Incluir Impuesto ICA (2%)?", "s3_ica_rate": "Tasa ICA (%)",
-        "s4_title": "4. Financiación", "s4_enable": "¿Incluir Deuda?", "s4_ratio": "Nivel de Deuda (%)", "s4_int": "Tasa Interés (Anual %)", "s4_tenor": "Plazo Crédito (Años)", "s4_fee": "Comisión Estructuración (%)", "s4_grace": "Periodo de Gracia (Trimestres)",
+        "header_proj": "Nombre del Proyecto", "header_client": "Cliente",
+        "header_loc": "Ubicación",
+        "curr_title": "0. Moneda y TRM", "curr_display": "Moneda Visual",
+        "curr_fx": "TRM Actual (COP/USD)", "curr_inf": "Inflación USA (Anual %)",
+
+        "s1_title": "1. Plazos e Ingresos", "s1_time": "Cronograma",
+        "s1_year": "Año Inicio", "s1_q": "Trimestre Inicio",
+        "s1_contract": "Detalles del Contrato", "s1_dur": "Duración PPA (Años)",
+        "s1_tariff": "Tarifa Actual", "s1_inf": "Inflación Servicios (Anual %)",
+        "s1_disc": "Descuento al Cliente (%)",
+        "s1_link": "¿Indexar PPA a Inflación?",
+        "s1_lock": "Escalador atado a Inflación",
+        "s1_esc": "Escalador PPA (Anual %)",
+        "s1_tech": "Técnico y Generación",
+        "s1_mod": "Módulos", "s1_pow": "Potencia Módulo (W)",
+        "s1_deg": "Degradación (Anual %)",
+        "s1_gen_lbl": "Energía Contratada (MWh/año)",
+        "s1_cons": "Consumo Total Cliente (MWh/año)",
+
+        "s2_title": "2. Costos",
+        "s2_const": "Periodo Construcción (Trimestres)",
+        "s2_capex": "CAPEX Total",
+        "s2_opex": "OPEX Anual",
+        "s2_oinf": "Inflación OPEX (Anual %)",
+        "s2_sga": "SGA (% de Utilidad Bruta)",
+        "s2_sgaconst": "SGA Durante Construcción (%)",
+
+        "s3_title": "3. Impuestos", "s3_tax": "Impuesto de Renta (%)",
+        "s3_cap": "Ganancia Ocasional (%)",
+        "s3_dep": "Plazo Depreciación (Años)",
+        "s3_dut": "Gravámenes y Otros",
+        "s3_ftt": "Tasa 4x1000 (%)",
+        "s3_ica": "¿Incluir Impuesto ICA (2%)?",
+        "s3_ica_rate": "Tasa ICA (%)",
+        "s3_capex_ben": "¿Aplicar beneficio Ley 1715 (50% CAPEX)?",
+        "s3_capex_years": "Ventana Beneficio (Años después de COD, máx. 15)",
+        "s3_capex_pct": "% de CAPEX Elegible para Beneficio",
+
+        "s4_title": "4. Financiación",
+        "s4_enable": "¿Incluir Deuda?",
+        "s4_ratio": "Nivel de Deuda (%)",
+        "s4_int": "Tasa Interés (Anual %)",
+        "s4_tenor": "Plazo Crédito (Años)",
+        "s4_fee": "Comisión Estructuración (%)",
+        "s4_grace": "Periodo de Gracia (Trimestres)",
+
         "s5_title": "5. Escenario",
         "s5_method": "Método de Salida",
         "s5_year": "Año de Salida",
-        "s5_val": "Valor Venta Activo",
+        "s5_val": "Valor Venta Activo (M COP)",
         "s5_mult": "Múltiplo Valoración (x EBITDA)",
         "s5_ke": "Tasa Descuento Inversionista (Ke %)",
+
         "kpi_eq": "Inversión Equity",
         "kpi_tar": "Tarifa PPA Año 1",
         "kpi_irr": "TIR Inversionista",
         "kpi_npv": "VPN Inversionista",
         "kpi_moic": "Multiplo (MOIC)",
         "kpi_cov": "Cobertura Proyecto",
+
         "card_proj": "🏗️ Proyecto (Sin Deuda)",
         "card_eq": "🦅 Equity (Con Deuda)",
         "card_lev": "⚖️ Efecto Apalancamiento",
         "lbl_lev": "Nivel Deuda",
         "lbl_nodebt": "Sin Deuda",
+
         "rev_proof": "🔎 Detalle Cálculo de Ingresos",
         "chart_cf": "💰 Comparación Flujo de Caja",
         "tab_full": "🔎 Flujo de Caja Detallado",
         "tab_pl": "📑 Estado de Resultados (P&L)",
-        "sim_title": "⚡ 5. Matriz de Simulación (TIR Equity)",
+
+        "sim_title": "⚡ 5. Matriz de Simulación - Sensibilidad de TIR Equity para Recompra del Activo por el Cliente (Valor de Venta vs. Año de Venta)",
         "sim_run": "▶️ Ejecutar Simulación",
         "sim_min": "Valor Min",
         "sim_max": "Valor Max",
         "sim_step": "Paso",
-        "sim_chart": "Sensibilidad TIR Equity",
+        "sim_chart": "Sensibilidad de TIR Equity para Escenario de Recompra",
+        "sim_match_title": "Puntos de simulación con TIR cercana al caso base",
+
         "col_gen": "Generación",
         "col_rev": "Ingresos",
         "col_price": "Tarifa Prom",
         "col_ftt": "Costo 4x1000",
+
         "s6_title": "6. Trazabilidad de Documentos"
     }
 }
 
-# --- LANGUAGE SELECTOR ---
+
+# ------------------------------------------------------
+# LANGUAGE SELECTOR
+# ------------------------------------------------------
 sel_lang = st.sidebar.selectbox("Language / Idioma", ["English", "Español"])
 T = LANG[sel_lang]
 
-# --- RESET BUTTON ---
+
+# ------------------------------------------------------
+# RESET BUTTON
+# ------------------------------------------------------
 if st.sidebar.button("↺ Reset to Base Case"):
     set_base_case()
     st.rerun()
 
-# --- HEADER ---
+
+# ------------------------------------------------------
+# HEADER
+# ------------------------------------------------------
 col_logo, col_title = st.columns([1, 6])
 with col_logo:
     if os.path.exists("logo.jpg"):
@@ -195,10 +340,10 @@ with col_logo:
 with col_title:
     st.title("Pharos Capital: BTM Model")
 
-# --- PROJECT DETAILS ---
 c_proj1, c_proj2, c_proj3 = st.columns(3)
 with c_proj1:
-    project_name = st.text_input(T["header_proj"], value="Hampton Inn Bogota - Aeropuerto")
+    project_name = st.text_input(T["header_proj"],
+                                 value="Hampton Inn Bogota - Aeropuerto")
 with c_proj2:
     client_name = st.text_input(T["header_client"], value="Hampton Inn")
 with c_proj3:
@@ -206,21 +351,29 @@ with c_proj3:
 
 st.markdown("---")
 
-# ==========================================
+
+# ------------------------------------------------------
 # 0. SETTINGS
-# ==========================================
+# ------------------------------------------------------
 with st.sidebar.expander(T["curr_title"], expanded=True):
-    currency_mode = st.radio(T["curr_display"], ["COP (Millions)", "USD (Thousands)"], horizontal=False)
+    currency_mode = st.radio(T["curr_display"],
+                             ["COP (Millions)", "USD (Thousands)"],
+                             horizontal=False)
     symbol = "$" if "USD" in currency_mode else ""
-    fx_rate_current = st.number_input(T["curr_fx"], value=st.session_state.fx_rate_current, step=50.0, format="%.1f")
+    fx_rate_current = st.number_input(T["curr_fx"],
+                                      value=st.session_state.fx_rate_current,
+                                      step=50.0, format="%.1f")
     st.session_state.fx_rate_current = fx_rate_current
-    us_inflation_annual = st.number_input(T["curr_inf"], value=2.5, step=0.1, format="%.1f") / 100
+    us_inflation_annual = st.number_input(T["curr_inf"],
+                                          value=2.5, step=0.1,
+                                          format="%.1f") / 100
 
 inv_conv_factor_base = 1000 / st.session_state.fx_rate_current if "USD" in currency_mode else 1
 
-# ==========================================
-# 1. INPUTS - TIMELINE & REVENUE
-# ==========================================
+
+# ------------------------------------------------------
+# 1. TIMELINE & REVENUE
+# ------------------------------------------------------
 with st.sidebar.expander(T["s1_title"], expanded=False):
     st.markdown(f"**{T['s1_time']}**")
     c_start1, c_start2 = st.columns(2)
@@ -233,78 +386,149 @@ with st.sidebar.expander(T["s1_title"], expanded=False):
     st.markdown("---")
     st.markdown(f"**{T['s1_contract']}**")
     ppa_term_years = st.slider(T["s1_dur"], 5, 20, key="ppa_term")
-    current_tariff = st.number_input(f"{T['s1_tariff']} ($/kWh)", key="tariff_val", step=10.0, format="%.1f")
-    utility_inflation_annual = st.number_input(T["s1_inf"], key="inf_val", step=0.5, format="%.1f") / 100
-    discount_rate = st.number_input(T["s1_disc"], key="disc_val", step=1.0, format="%.1f") / 100
+    current_tariff = st.number_input(f"{T['s1_tariff']} ($/kWh)",
+                                     key="tariff_val", step=10.0,
+                                     format="%.1f")
+    utility_inflation_annual = st.number_input(T["s1_inf"],
+                                               key="inf_val",
+                                               step=0.5,
+                                               format="%.1f") / 100
+    discount_rate = st.number_input(T["s1_disc"],
+                                    key="disc_val",
+                                    step=1.0,
+                                    format="%.1f") / 100
 
     link_to_inflation = st.checkbox(T["s1_link"], key="link_inf")
     if link_to_inflation:
         pcp_escalator_annual = utility_inflation_annual
-        st.info(f"🔒 {T['s1_lock']} ({utility_inflation_annual*100:.1f}%)")
+        st.info(f"🔒 {T['s1_lock']} ({utility_inflation_annual * 100:.1f}%)")
     else:
-        pcp_escalator_annual = st.number_input(T["s1_esc"], key="esc_val", step=0.5, format="%.1f") / 100
+        pcp_escalator_annual = st.number_input(T["s1_esc"],
+                                               key="esc_val",
+                                               step=0.5,
+                                               format="%.1f") / 100
 
     st.markdown("---")
     st.caption(T["s1_tech"])
-    initial_gen_mwh_annual = st.number_input(T["s1_gen_lbl"], key="gen_val", step=0.1, format="%.1f")
-    client_consumption = st.number_input(T["s1_cons"], key="cons_val", step=10.0, format="%.1f")
+    initial_gen_mwh_annual = st.number_input(T["s1_gen_lbl"],
+                                             key="gen_val",
+                                             step=0.1,
+                                             format="%.1f")
+    client_consumption = st.number_input(T["s1_cons"],
+                                         key="cons_val",
+                                         step=10.0,
+                                         format="%.1f")
     if client_consumption > 0:
         coverage_pct = (initial_gen_mwh_annual / client_consumption) * 100
     else:
         coverage_pct = 0
     st.metric(T["kpi_cov"], f"{coverage_pct:.1f}%")
-    degradation_annual = st.number_input(T["s1_deg"], key="deg_val", step=0.1, format="%.1f") / 100
+    degradation_annual = st.number_input(T["s1_deg"],
+                                         key="deg_val",
+                                         step=0.1,
+                                         format="%.1f") / 100
 
-# ==========================================
+
+# ------------------------------------------------------
 # 2. COSTS
-# ==========================================
+# ------------------------------------------------------
 with st.sidebar.expander(T["s2_title"], expanded=False):
     st.markdown("**CAPEX & OPEX**")
     construction_quarters = st.slider(T["s2_const"], 0, 8, key="const_q")
-    capex_million_cop = st.number_input(f"{T['s2_capex']} (M COP)", key="capex_val", step=10.0, format="%.1f")
-    opex_million_cop_annual = st.number_input(f"{T['s2_opex']} (M COP/yr)", key="opex_val", step=0.5, format="%.1f")
-    opex_inflation_annual = st.number_input(T["s2_oinf"], key="oinf_val", step=0.5, format="%.1f") / 100
-    sga_percent = st.number_input(T["s2_sga"], key="sga_val", step=1.0, format="%.1f") / 100
+    capex_million_cop = st.number_input(f"{T['s2_capex']} (M COP)",
+                                        key="capex_val",
+                                        step=10.0,
+                                        format="%.1f")
+    opex_million_cop_annual = st.number_input(
+        f"{T['s2_opex']} (M COP/yr)", key="opex_val",
+        step=0.5, format="%.1f"
+    )
+    opex_inflation_annual = st.number_input(T["s2_oinf"],
+                                            key="oinf_val",
+                                            step=0.5,
+                                            format="%.1f") / 100
+    sga_percent = st.number_input(T["s2_sga"],
+                                  key="sga_val",
+                                  step=1.0,
+                                  format="%.1f") / 100
 
-    sga_const_pct = st.number_input(T["s2_sgaconst"], key="sga_const_val", step=0.1, format="%.1f",
-                                    help="SGA as % of CAPEX, capitalized during construction") / 100
+    sga_const_pct = st.number_input(
+        T["s2_sgaconst"], key="sga_const_val",
+        step=0.1, format="%.1f",
+        help="SGA as % of CAPEX, capitalized during construction"
+    ) / 100
     sga_const_cost_cop = capex_million_cop * sga_const_pct
     sga_const_cost_disp = sga_const_cost_cop * inv_conv_factor_base
     st.write(f"**Cost:** {symbol}{sga_const_cost_disp:,.1f} {currency_mode.split()[0]}")
 
-# ==========================================
+
+# ------------------------------------------------------
 # 3. TAX
-# ==========================================
+# ------------------------------------------------------
 with st.sidebar.expander(T["s3_title"], expanded=False):
     st.markdown("**Fiscal Regime**")
-    tax_rate = st.number_input(T["s3_tax"], key="tax_val", step=1.0, format="%.1f") / 100
-    cap_gains_rate = st.number_input(T["s3_cap"], key="cg_val", step=1.0, format="%.1f") / 100
+    tax_rate = st.number_input(T["s3_tax"],
+                               key="tax_val",
+                               step=1.0,
+                               format="%.1f") / 100
+    cap_gains_rate = st.number_input(T["s3_cap"],
+                                     key="cg_val",
+                                     step=1.0,
+                                     format="%.1f") / 100
     depreciation_years = st.slider(T["s3_dep"], 3, 25, key="dep_val")
 
     st.markdown("---")
     st.caption(T["s3_dut"])
-    ftt_rate = st.number_input(T["s3_ftt"], key="ftt_val", value=0.4, step=0.1, format="%.1f",
-                               help="Applied to cash disbursements: CAPEX, OPEX, SGA, Debt Service, Tax") / 1000
+    ftt_rate = st.number_input(
+        T["s3_ftt"], key="ftt_val",
+        value=0.4, step=0.1,
+        format="%.1f",
+        help="Applied to cash disbursements: CAPEX, OPEX, SGA, Debt Service, Tax"
+    ) / 1000
 
     enable_ica = st.checkbox(T["s3_ica"], key="ica_on")
     if enable_ica:
-        ica_rate = st.number_input(T["s3_ica_rate"], key="ica_rate", value=2.0, step=0.1, format="%.1f",
-                                   help="Applied to Total Revenue") / 100
+        ica_rate = st.number_input(
+            T["s3_ica_rate"], key="ica_rate",
+            value=2.0, step=0.1,
+            format="%.1f",
+            help="Applied to Total Revenue"
+        ) / 100
     else:
         ica_rate = 0.0
 
-# ==========================================
+    st.markdown("---")
+    st.markdown("**Ley 1715 - CAPEX Tax Benefit**")
+    enable_capex_benefit = st.checkbox(T["s3_capex_ben"], value=False)
+    if enable_capex_benefit:
+        capex_benefit_years = st.slider(T["s3_capex_years"], 1, 15, value=10)
+        capex_benefit_capex_pct = st.slider(T["s3_capex_pct"], 0, 100, value=100) / 100.0
+    else:
+        capex_benefit_years = 0
+        capex_benefit_capex_pct = 0.0
+
+
+# ------------------------------------------------------
 # 4. FINANCING
-# ==========================================
+# ------------------------------------------------------
 with st.sidebar.expander(T["s4_title"], expanded=False):
     st.markdown("**Debt Structure**")
     enable_debt = st.checkbox(T["s4_enable"], key="debt_on")
     if enable_debt:
         debt_ratio = st.slider(T["s4_ratio"], 0, 100, key="dr_val") / 100
-        interest_rate_annual = st.number_input(T["s4_int"], key="int_val", step=0.1, format="%.1f") / 100
-        loan_tenor_years = st.number_input(T["s4_tenor"], key="tenor_val", step=1)
-        structuring_fee_pct = st.number_input(T["s4_fee"], key="fee_val", step=0.1, format="%.1f") / 100
-        grace_period_quarters = st.number_input(T["s4_grace"], key="grace_val", step=1)
+        interest_rate_annual = st.number_input(T["s4_int"],
+                                               key="int_val",
+                                               step=0.1,
+                                               format="%.1f") / 100
+        loan_tenor_years = st.number_input(T["s4_tenor"],
+                                           key="tenor_val", step=1)
+        structuring_fee_pct = st.number_input(T["s4_fee"],
+                                              key="fee_val",
+                                              step=0.1,
+                                              format="%.1f") / 100
+        grace_period_quarters = st.number_input(T["s4_grace"],
+                                                key="grace_val",
+                                                step=1)
     else:
         debt_ratio = 0.0
         interest_rate_annual = 0.0
@@ -312,27 +536,40 @@ with st.sidebar.expander(T["s4_title"], expanded=False):
         structuring_fee_pct = 0.0
         grace_period_quarters = 0
 
-# ==========================================
+
+# ------------------------------------------------------
 # 5. SCENARIO / EXIT
-# ==========================================
+# ------------------------------------------------------
 with st.sidebar.expander(T["s5_title"], expanded=False):
     st.markdown("**Valuation**")
-    dash_exit_strategy = st.radio(T["s5_method"], ["Fixed Asset Value", "EBITDA Multiple"], key="exit_method")
+    dash_exit_strategy = st.radio(T["s5_method"],
+                                  ["Fixed Asset Value", "EBITDA Multiple"],
+                                  key="exit_method")
     dash_exit_year = st.slider(T["s5_year"], 2, ppa_term_years, key="exit_yr")
     if dash_exit_strategy == "Fixed Asset Value":
-        dash_exit_val_cop = st.number_input(f"{T['s5_val']} (M COP)", key="exit_asset_val", step=5.0, format="%.1f")
+        dash_exit_val_cop = st.number_input(T["s5_val"],
+                                            key="exit_asset_val",
+                                            step=5.0,
+                                            format="%.1f")
         dash_exit_mult = 0
     else:
-        dash_exit_mult = st.number_input(T["s5_mult"], key="exit_mult_val", step=0.5, format="%.1f")
+        dash_exit_mult = st.number_input(T["s5_mult"],
+                                         key="exit_mult_val",
+                                         step=0.5,
+                                         format="%.1f")
         dash_exit_val_cop = 0
 
     st.markdown("---")
-    investor_disc_rate = st.number_input(T["s5_ke"], key="ke_val", step=0.5, format="%.1f") / 100
+    investor_disc_rate = st.number_input(T["s5_ke"],
+                                         key="ke_val",
+                                         step=0.5,
+                                         format="%.1f") / 100
 
-# ==========================================
+
+# ------------------------------------------------------
 # 6. DOCUMENT AUDIT TRAIL
-# ==========================================
-with st.sidebar.expander(T.get("s6_title", "6. Document Audit Trail"), expanded=False):
+# ------------------------------------------------------
+with st.sidebar.expander(T["s6_title"], expanded=False):
     uploaded_files = st.file_uploader(
         "Upload Source Documents (PDFs, Images, CSVs)",
         type=['pdf', 'png', 'jpg', 'jpeg', 'csv'],
@@ -351,9 +588,10 @@ if uploaded_files:
         if file_info['name'] not in [f['name'] for f in st.session_state['uploaded_files']]:
             st.session_state['uploaded_files'].append(file_info)
 
-# ==========================================
+
+# ------------------------------------------------------
 # ENGINE
-# ==========================================
+# ------------------------------------------------------
 full_quarters = construction_quarters + (ppa_term_years * 4)
 quarters_range = list(range(1, full_quarters + 1))
 
@@ -378,25 +616,39 @@ total_capex_cost = capex_million_cop + structuring_fee + sga_const_cost_cop
 equity_investment_levered_cop = total_capex_cost - total_debt_principal
 equity_investment_unlevered_cop = total_capex_cost
 
+# CAPEX tax benefit pool (Ley 1715)
+if enable_capex_benefit and capex_benefit_years > 0:
+    eligible_capex = capex_million_cop * capex_benefit_capex_pct
+    capex_benefit_total = 0.5 * eligible_capex
+    capex_benefit_remaining = capex_benefit_total
+else:
+    eligible_capex = 0.0
+    capex_benefit_total = 0.0
+    capex_benefit_remaining = 0.0
+
 q_list, gy_list, cal_list = [], [], []
 gen_list, rev_list, ebitda_list = [], [], []
 opex_list, sga_list, gross_list = [], [], []
 dep_list, int_list, tax_list, ftt_list, ica_list = [], [], [], [], []
 ufcf_list, lfcf_list, debt_bal_list, book_val_list, fx_rate_list = [], [], [], [], []
 
-# Tax base tracking (for loss carryforward)
+# Tax base tracking
 base_unlev_list, base_lev_list = [], []
+base_lev_pre_list = []
 cum_base_unlev_list, cum_base_lev_list = [], []
 cum_tax_unlev_list, cum_tax_lev_list = [], []
+capex_benefit_q_list = []
 
 debt_balance = total_debt_principal
 accumulated_dep = 0
 
-# Cumulative tax base & tax paid
 cum_base_unlev = 0.0
 cum_base_lev = 0.0
 cum_tax_unlev = 0.0
 cum_tax_lev = 0.0
+cum_base_lev_pre = 0.0
+
+op_start_calendar_year = None
 
 for i, q in enumerate(quarters_range):
     abs_q = (start_q_num - 1) + i
@@ -406,12 +658,14 @@ for i, q in enumerate(quarters_range):
 
     if q <= construction_quarters:
         phase = "Construction"
-        op_year = 0
         q_op_index = 0
+        op_year = 0
     else:
         phase = "Operation"
         q_op_index = q - construction_quarters
         op_year = (q_op_index - 1) // 4 + 1
+        if op_start_calendar_year is None:
+            op_start_calendar_year = cal_year
 
     global_year = (q - 1) // 4 + 1
 
@@ -422,7 +676,7 @@ for i, q in enumerate(quarters_range):
 
         p_price = current_tariff * (1 - discount_rate) * esc_factor
         gen_quarterly = (initial_gen_mwh_annual / 4) * deg_factor
-        rev = (gen_quarterly * p_price) / 1000  # M COP
+        rev = (gen_quarterly * p_price) / 1000
         opex = (opex_million_cop_annual / 4) * opex_fac
         gross = rev - opex
         sga = gross * sga_percent
@@ -452,32 +706,59 @@ for i, q in enumerate(quarters_range):
     else:
         interest = principal = 0
 
-    # --- TAX WITH LOSS CARRYFORWARD ---
-    # Unlevered base
-    base_unlev = ebitda - dep
-    cum_base_unlev += base_unlev
+    # Tax base before benefit
+    base_lev_pre = ebitda - interest - dep
 
-    # Levered base (after interest)
-    base_lev = ebitda - interest - dep
+    prev_cum_base_lev_pre = cum_base_lev_pre
+    cum_base_lev_pre += base_lev_pre
+
+    eff_base_q = max(cum_base_lev_pre, 0) - max(prev_cum_base_lev_pre, 0)
+
+    capex_tax_benefit_q = 0.0
+
+    if (
+        enable_capex_benefit
+        and phase == "Operation"
+        and op_start_calendar_year is not None
+        and cal_year >= op_start_calendar_year + 1
+        and cal_year < op_start_calendar_year + 1 + capex_benefit_years
+        and capex_benefit_remaining > 0
+        and eff_base_q > 0
+    ):
+        max_allowed_this_q = 0.5 * eff_base_q
+        capex_tax_benefit_q = min(capex_benefit_remaining, max_allowed_this_q)
+        capex_benefit_remaining -= capex_tax_benefit_q
+
+    base_unlev = ebitda - dep - capex_tax_benefit_q
+    base_lev = base_lev_pre - capex_tax_benefit_q
+
+    cum_base_unlev += base_unlev
     cum_base_lev += base_lev
 
-    # Theoretical cumulative tax (cannot be negative)
     theor_tax_unlev = tax_rate * max(cum_base_unlev, 0)
     theor_tax_lev = tax_rate * max(cum_base_lev, 0)
 
-    # Tax this quarter = increase in cumulative tax
     tax_unlevered = max(0, theor_tax_unlev - cum_tax_unlev)
     tax_levered = max(0, theor_tax_lev - cum_tax_lev)
 
-    # Update cumulative tax paid
     cum_tax_unlev += tax_unlevered
     cum_tax_lev += tax_levered
 
-    total_disbursements = capex_levered + opex + sga + principal + interest + tax_levered
+    if enable_debt:
+        total_disbursements = capex_levered + opex + sga + principal + interest + tax_levered
+    else:
+        total_disbursements = capex_unlevered + opex + sga + tax_unlevered
+
     ftt_cost = total_disbursements * ftt_rate
 
     accumulated_dep += dep
     book_val = max(0, capex_million_cop - accumulated_dep)
+
+    ufcf = ebitda - tax_unlevered - capex_unlevered - ftt_cost
+    if enable_debt:
+        lfcf = ebitda - tax_levered - interest - principal - capex_levered - ftt_cost
+    else:
+        lfcf = ufcf
 
     q_list.append(q)
     gy_list.append(global_year)
@@ -494,8 +775,8 @@ for i, q in enumerate(quarters_range):
     tax_list.append(tax_levered)
     ftt_list.append(ftt_cost)
 
-    ufcf_list.append(ebitda - tax_unlevered - capex_unlevered)
-    lfcf_list.append(ebitda - tax_levered - interest - principal - capex_levered - ftt_cost)
+    ufcf_list.append(ufcf)
+    lfcf_list.append(lfcf)
 
     debt_bal_list.append(debt_balance)
     book_val_list.append(book_val)
@@ -503,30 +784,36 @@ for i, q in enumerate(quarters_range):
 
     base_unlev_list.append(base_unlev)
     base_lev_list.append(base_lev)
+    base_lev_pre_list.append(base_lev_pre)
     cum_base_unlev_list.append(cum_base_unlev)
     cum_base_lev_list.append(cum_base_lev)
     cum_tax_unlev_list.append(cum_tax_unlev)
     cum_tax_lev_list.append(cum_tax_lev)
+    capex_benefit_q_list.append(capex_tax_benefit_q)
 
 df_full = pd.DataFrame({
     "Quarter": q_list, "Global_Year": gy_list, "Calendar_Year": cal_list,
     "FX_Rate": fx_rate_list, "Generation_MWh": gen_list,
     "Revenue_M_COP": rev_list, "OPEX_M_COP": opex_list, "Gross_M_COP": gross_list,
-    "SGA_M_COP": sga_list, "ICA_M_COP": ica_list, "EBITDA_M_COP": ebitda_list, "Depreciation_M_COP": dep_list,
-    "Interest_M_COP": int_list, "Tax_M_COP": tax_list, "FTT_M_COP": ftt_list,
-    "UFCF_M_COP": ufcf_list, "LFCF_M_COP": lfcf_list,
+    "SGA_M_COP": sga_list, "ICA_M_COP": ica_list, "EBITDA_M_COP": ebitda_list,
+    "Depreciation_M_COP": dep_list, "Interest_M_COP": int_list, "Tax_M_COP": tax_list,
+    "FTT_M_COP": ftt_list, "UFCF_M_COP": ufcf_list, "LFCF_M_COP": lfcf_list,
     "Debt_Balance_M_COP": debt_bal_list, "Book_Value_M_COP": book_val_list,
     "Tax_Base_Unlev_M_COP": base_unlev_list,
+    "Tax_Base_Lev_PreBenefit_M_COP": base_lev_pre_list,
     "Tax_Base_Lev_M_COP": base_lev_list,
     "Tax_Base_Unlev_Cum_M_COP": cum_base_unlev_list,
     "Tax_Base_Lev_Cum_M_COP": cum_base_lev_list,
     "Tax_Unlev_Cum_M_COP": cum_tax_unlev_list,
-    "Tax_Lev_Cum_M_COP": cum_tax_lev_list
+    "Tax_Lev_Cum_M_COP": cum_tax_lev_list,
+    "Capex_Tax_Benefit_M_COP": capex_benefit_q_list
 })
 
 conversion_factor = 1000 / df_full["FX_Rate"] if "USD" in currency_mode else 1
-for col in ["Revenue", "OPEX", "Gross", "SGA", "ICA", "EBITDA", "Depreciation", "Interest", "Tax", "FTT", "UFCF", "LFCF"]:
+for col in ["Revenue", "OPEX", "Gross", "SGA", "ICA", "EBITDA",
+            "Depreciation", "Interest", "Tax", "FTT", "UFCF", "LFCF"]:
     df_full[f"{col}_Disp"] = df_full[f"{col}_M_COP"] * conversion_factor
+
 
 # Exit logic
 if dash_exit_strategy == "Fixed Asset Value":
@@ -555,8 +842,9 @@ exit_inflow_levered_disp = (final_exit_val_cop - debt_b_final - cg_tax) * conv_f
 df_dash.at[last_idx, "UFCF_Disp"] += exit_inflow_unlevered_disp
 df_dash.at[last_idx, "LFCF_Disp"] += exit_inflow_levered_disp
 
-agg_cols = ["Generation_MWh", "Revenue_Disp", "OPEX_Disp", "Gross_Disp", "SGA_Disp", "ICA_Disp",
-            "EBITDA_Disp", "Depreciation_Disp", "Interest_Disp", "Tax_Disp", "FTT_Disp",
+agg_cols = ["Generation_MWh", "Revenue_Disp", "OPEX_Disp", "Gross_Disp",
+            "SGA_Disp", "ICA_Disp", "EBITDA_Disp", "Depreciation_Disp",
+            "Interest_Disp", "Tax_Disp", "FTT_Disp",
             "UFCF_Disp", "LFCF_Disp"]
 df_annual_dash = df_dash.groupby("Calendar_Year")[agg_cols].sum().reset_index()
 df_annual_full = df_full.groupby("Calendar_Year")[agg_cols].sum().reset_index()
@@ -572,6 +860,7 @@ else:
         df_annual_dash.loc[mask, "Revenue_Disp"] / df_annual_dash.loc[mask, "Generation_MWh"]
     ) * 1000
 
+
 def get_irr(stream):
     try:
         q_irr = npf.irr(stream)
@@ -579,20 +868,22 @@ def get_irr(stream):
     except Exception:
         return 0
 
+
 inv_conv = 1000 / fx_rate_current if "USD" in currency_mode else 1
 equity_inv_disp = equity_investment_levered_cop * inv_conv
 irr_unlevered = get_irr(df_dash["UFCF_Disp"])
 irr_levered = get_irr(df_dash["LFCF_Disp"])
 moic_levered = df_dash["LFCF_Disp"].sum() / equity_inv_disp if equity_inv_disp > 0 else 0
 npv_equity = npf.npv(investor_disc_rate / 4, [0] + df_dash["LFCF_Disp"].tolist())
-
 symbol = "$" if "USD" in currency_mode else ""
 
-# ==========================================
-# SCENARIO SAVE / MANAGE
-# ==========================================
+
+# ------------------------------------------------------
+# SCENARIO MANAGEMENT
+# ------------------------------------------------------
 st.markdown("### Scenario Management")
 
+# --- Save scenario ---
 scenario_name = st.text_input(
     "Scenario name (e.g. 'Base COP with debt 70%')",
     value="",
@@ -604,116 +895,327 @@ if st.button("💾 Save current scenario"):
         st.warning("Please enter a scenario name before saving.")
     else:
         st.session_state["scenarios"][scenario_name] = {
-            "Currency": currency_mode,
             "Equity_Investment": equity_inv_disp,
             "IRR_Levered_%": irr_levered,
-            "IRR_Unlevered_%": irr_unlevered,
             "MOIC_x": moic_levered,
-            "NPV_Equity": npv_equity,
-            "Coverage_%": coverage_pct,
-            "Debt_%": debt_ratio * 100,
             "Exit_Method": dash_exit_strategy,
             "Exit_Year": dash_exit_year,
             "Exit_Value_M_COP": final_exit_val_cop,
-            "Start_Year": start_year,
-            "Start_Q": start_q_str,
             "Tariff_$perkWh": current_tariff,
         }
+        save_scenarios_to_disk()
         st.success(f"Scenario '{scenario_name}' saved.")
 
-# ==========================================
-# OUTPUT - TOP KPIs & PDF
-# ==========================================
+# --- Delete scenario ---
+if st.session_state["scenarios"]:
+    st.markdown("#### Delete saved scenario")
+    col_del1, col_del2 = st.columns([3, 1])
+
+    with col_del1:
+        scenario_to_delete = st.selectbox(
+            "Select scenario to delete",
+            list(st.session_state["scenarios"].keys()),
+            key="scenario_to_delete"
+        )
+
+    with col_del2:
+        if st.button("🗑️ Delete selected scenario"):
+            if scenario_to_delete in st.session_state["scenarios"]:
+                del st.session_state["scenarios"][scenario_to_delete]
+                save_scenarios_to_disk()
+                st.success(f"Scenario '{scenario_to_delete}' deleted.")
+                st.rerun()
+else:
+    st.caption("No saved scenarios to delete.")
+
+
+# ------------------------------------------------------
+# PDF HELPER FUNCTIONS (CHARTS)
+# ------------------------------------------------------
+def make_fcf_chart_image(df_annual_dash_local, currency_mode_local):
+    unit_label = currency_mode_local
+    years = df_annual_dash_local["Calendar_Year"].astype(int)
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.bar(years - 0.15, df_annual_dash_local["UFCF_Disp"],
+           width=0.3, label="UFCF")
+    ax.bar(years + 0.15, df_annual_dash_local["LFCF_Disp"],
+           width=0.3, label="LFCF")
+    ax.set_title(f"Free Cash Flows by Year ({unit_label})")
+    ax.set_xlabel("Year")
+    ax.set_ylabel(unit_label)
+    ax.legend()
+    fig.tight_layout()
+    tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    fig.savefig(tmpfile.name, dpi=150)
+    plt.close(fig)
+    return tmpfile.name
+
+
+def make_sim_heatmap_image(sim_df_local, T_local, currency_mode_local):
+    if sim_df_local is None or sim_df_local.empty:
+        return None
+
+    # sim_df_local must have ExitYear, ExitValue, IRR
+    pivot = sim_df_local.pivot(index="ExitYear", columns="ExitValue", values="IRR")
+    years = pivot.index.values
+    vals = pivot.columns.values
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    c = ax.imshow(pivot.values, aspect="auto", origin="lower")
+    ax.set_xticks(np.arange(len(vals)))
+    ax.set_xticklabels(vals, rotation=45, ha="right")
+    ax.set_yticks(np.arange(len(years)))
+    ax.set_yticklabels(years)
+    ax.set_xlabel(T_local["s5_val"])
+    ax.set_ylabel(T_local["s5_year"])
+    ax.set_title(f"{T_local['sim_chart']} ({currency_mode_local})")
+    fig.colorbar(c, ax=ax, label="IRR %")
+    fig.tight_layout()
+    tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    fig.savefig(tmpfile.name, dpi=150)
+    plt.close(fig)
+    return tmpfile.name
+
+
+# ------------------------------------------------------
+# PDF GENERATION
+# ------------------------------------------------------
+class PDF(FPDF):
+    def header(self):
+        if os.path.exists("logo.jpg"):
+            self.image("logo.jpg", 10, 8, 33)
+        self.set_font('Arial', 'B', 15)
+        self.cell(80)
+        self.cell(30, 10, 'Pharos Capital: BTM Model', 0, 0, 'C')
+        self.ln(20)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+
+def create_pdf(df_agg, df_annual_dash_local, proj_name, cli_name, loc,
+               curr_sym, currency_mode_local, fx_rate_current_local,
+               sim_df_local=None, close_df_local=None):
+    pdf = PDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+
+    # Units note
+    pdf.set_font("Arial", 'I', 9)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, f"All monetary figures in {currency_mode_local}", 0, 1, 'R')
+    pdf.ln(2)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", size=12)
+
+    # Compute Year-1 PPA price to client
+    ppa_price_year1_cop = current_tariff * (1 - discount_rate)
+    if "USD" in currency_mode_local:
+        ppa_price_year1_disp = ppa_price_year1_cop / fx_rate_current_local
+    else:
+        ppa_price_year1_disp = ppa_price_year1_cop
+
+    # 1. Project Overview
+    pdf.set_fill_color(14, 47, 68)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, "1. Project Overview", 0, 1, 'L', 1)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(2)
+    pdf.cell(90, 7, f"Project: {proj_name}", 0, 0)
+    pdf.cell(90, 7, f"Client: {cli_name}", 0, 1)
+    pdf.cell(90, 7, f"Location: {loc}", 0, 1)
+    pdf.ln(5)
+
+    # 2. Key Assumptions
+    pdf.set_fill_color(14, 47, 68)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, "2. Key Assumptions", 0, 1, 'L', 1)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(2)
+
+    # Row 1: timing
+    pdf.cell(60, 7, f"Start: {start_year} {start_q_str}", 0, 0)
+    pdf.cell(60, 7, f"Term: {ppa_term_years} Years", 0, 1)
+
+    # Row 2: tariffs
+    pdf.cell(60, 7, f"Client Tariff: ${current_tariff:,.1f}/kWh", 0, 0)
+    pdf.cell(60, 7, f"Discount Offered: {discount_rate*100:.1f}%", 0, 0)
+    pdf.cell(60, 7, f"Year 1 PPA Price: ${ppa_price_year1_disp:,.2f}/kWh", 0, 1)
+
+    # Row 3: energy & capex
+    pdf.cell(60, 7, f"Energy: {initial_gen_mwh_annual:,.1f} MWh", 0, 0)
+    pdf.cell(
+        60, 7,
+        f"CAPEX: {curr_sym}{capex_million_cop*inv_conv:,.1f} {currency_mode_local.split()[0]}",
+        0, 0
+    )
+    pdf.cell(60, 7, f"Leverage: {debt_ratio*100:.0f}%", 0, 1)
+    pdf.ln(5)
+
+    # 3. Executive Summary
+    pdf.set_fill_color(14, 47, 68)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, "3. Executive Summary", 0, 1, 'L', 1)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(2)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(45, 10, f"Eq Inv: {curr_sym}{equity_inv_disp:,.1f}", 1, 0, 'C')
+    pdf.cell(45, 10, f"IRR: {irr_levered:.1f}%", 1, 0, 'C')
+    pdf.cell(45, 10, f"NPV: {curr_sym}{npv_equity:,.1f}", 1, 0, 'C')
+    pdf.cell(45, 10, f"MOIC: {moic_levered:,.1f}x", 1, 1, 'C')
+    pdf.set_font("Arial", size=12)
+    pdf.ln(5)
+
+    # 4. FCF Overview (Chart)
+    pdf.set_fill_color(14, 47, 68)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, "4. Free Cash Flow Overview", 0, 1, 'L', 1)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(2)
+    try:
+        fcf_img = make_fcf_chart_image(df_annual_dash_local, currency_mode_local)
+        pdf.image(fcf_img, x=10, y=None, w=180)
+    except Exception as e:
+        pdf.set_font("Arial", '', 10)
+        pdf.cell(0, 6, f"(Could not render FCF chart: {e})", 0, 1)
+    pdf.ln(5)
+
+    # 5. Simulation Matrix - IRR Sensitivity
+    if sim_df_local is not None and not sim_df_local.empty:
+        pdf.set_fill_color(14, 47, 68)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(
+            0, 10,
+            "5. Simulation Matrix - Equity IRR Sensitivity for Client Asset Buy-Back",
+            0, 1, 'L', 1
+        )
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(2)
+        try:
+            sim_img = make_sim_heatmap_image(sim_df_local, T, currency_mode_local)
+            if sim_img:
+                pdf.image(sim_img, x=10, y=None, w=180)
+        except Exception as e:
+            pdf.set_font("Arial", '', 10)
+            pdf.cell(0, 6, f"(Could not render sensitivity heatmap: {e})", 0, 1)
+        pdf.ln(5)
+
+        # 5a. Simulation Table (excerpt)
+        pdf.set_fill_color(14, 47, 68)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(0, 10, "5a. Simulation Table (Exit Year vs Asset Value)", 0, 1, 'L', 1)
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(2)
+        pdf.set_font("Arial", size=9)
+
+        sim_tbl = sim_df_local.copy()
+
+        # Normalize column names regardless of language / history
+        if "ExitYear" in sim_tbl.columns and "ExitValue" in sim_tbl.columns:
+            pass
+        elif T["s5_year"] in sim_tbl.columns and T["s5_val"] in sim_tbl.columns:
+            sim_tbl = sim_tbl.rename(columns={
+                T["s5_year"]: "ExitYear",
+                T["s5_val"]: "ExitValue"
+            })
+        elif "Exit Year" in sim_tbl.columns and "Exit Value (M COP)" in sim_tbl.columns:
+            sim_tbl = sim_tbl.rename(columns={
+                "Exit Year": "ExitYear",
+                "Exit Value (M COP)": "ExitValue"
+            })
+        else:
+            year_col = next(
+                (c for c in sim_tbl.columns if "Year" in c or "Año" in c),
+                None
+            )
+            val_col = next(
+                (c for c in sim_tbl.columns if c not in ("IRR", year_col)),
+                None
+            )
+            if year_col and val_col:
+                sim_tbl = sim_tbl.rename(columns={
+                    year_col: "ExitYear",
+                    val_col: "ExitValue"
+                })
+            else:
+                return pdf.output(dest='S').encode('latin-1', 'replace')
+
+        sim_tbl = sim_tbl.sort_values(["ExitYear", "ExitValue"])
+        sim_tbl = sim_tbl[["ExitYear", "ExitValue", "IRR"]].head(25)
+
+        headers_sim = ["Exit Year", "Exit Value (M COP)", "IRR %"]
+        widths_sim = [25, 55, 25]
+
+        pdf.set_fill_color(220, 220, 220)
+        for w, h in zip(widths_sim, headers_sim):
+            pdf.cell(w, 7, h, 1, 0, 'C', 1)
+        pdf.ln()
+
+        for _, row in sim_tbl.iterrows():
+            pdf.cell(widths_sim[0], 6, f"{int(row['ExitYear'])}", 1, 0, 'C')
+            pdf.cell(widths_sim[1], 6, f"{row['ExitValue']:,.1f}", 1, 0, 'R')
+            pdf.cell(widths_sim[2], 6, f"{row['IRR']:,.1f}", 1, 0, 'R')
+            pdf.ln()
+
+        pdf.ln(5)
+
+    # 6. Alternatives Matching Base IRR
+    if close_df_local is not None and not close_df_local.empty:
+        pdf.set_fill_color(14, 47, 68)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(0, 10, "6. Alternatives with IRR Close to Base Case", 0, 1, 'L', 1)
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(2)
+        pdf.set_font("Arial", size=9)
+
+        close_pdf = close_df_local.head(10).copy()
+        headers = ["Exit Year", "Exit Value (M COP)", "IRR %", "Delta IRR vs Base"]
+        widths = [25, 55, 25, 30]
+        pdf.set_fill_color(220, 220, 220)
+        for w, h in zip(widths, headers):
+            pdf.cell(w, 7, h, 1, 0, 'C', 1)
+        pdf.ln()
+
+        for _, row in close_pdf.iterrows():
+            pdf.cell(widths[0], 6, f"{int(row['Exit Year'])}", 1, 0, 'C')
+            pdf.cell(widths[1], 6, f"{row['Exit Value (M COP)']:,.1f}", 1, 0, 'R')
+            pdf.cell(widths[2], 6, f"{row['IRR']:,.1f}", 1, 0, 'R')
+            pdf.cell(widths[3], 6, f"{row['ΔIRR_vs_Base']:+.1f}", 1, 0, 'R')
+            pdf.ln()
+
+    return pdf.output(dest='S').encode('latin-1', 'replace')
+
+
+# ------------------------------------------------------
+# TOP KPIs & PDF BUTTON
+# ------------------------------------------------------
 col_head1, col_head2 = st.columns([3, 1])
 with col_head1:
     st.subheader(f"📊 {currency_mode}")
 with col_head2:
-    class PDF(FPDF):
-        def header(self):
-            if os.path.exists("logo.jpg"):
-                self.image("logo.jpg", 10, 8, 33)
-            self.set_font('Arial', 'B', 15)
-            self.cell(80)
-            self.cell(30, 10, 'Pharos Capital: BTM Model', 0, 0, 'C')
-            self.ln(20)
+    sim_df_for_pdf = st.session_state.get("sim_df", None)
+    close_df_for_pdf = st.session_state.get("sim_close_df", None)
+    pdf_bytes = create_pdf(
+        df_annual_dash,
+        df_annual_dash,
+        project_name,
+        client_name,
+        project_loc,
+        symbol,
+        currency_mode,
+        fx_rate_current,
+        sim_df_local=sim_df_for_pdf,
+        close_df_local=close_df_for_pdf
+    )
+    st.download_button(
+        label="📄 Download PDF Report",
+        data=pdf_bytes,
+        file_name="pharos_memo.pdf",
+        mime="application/pdf"
+    )
 
-        def footer(self):
-            self.set_y(-15)
-            self.set_font('Arial', 'I', 8)
-            self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
-
-    def create_pdf(df_agg, proj_name, cli_name, loc, curr_sym):
-        pdf = PDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-
-        pdf.set_fill_color(14, 47, 68)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(0, 10, "1. Project Overview", 0, 1, 'L', 1)
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(2)
-        pdf.cell(90, 7, f"Project: {proj_name}", 0, 0)
-        pdf.cell(90, 7, f"Client: {cli_name}", 0, 1)
-        pdf.cell(90, 7, f"Location: {loc}", 0, 1)
-        pdf.ln(5)
-
-        pdf.set_fill_color(14, 47, 68)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(0, 10, "2. Key Assumptions", 0, 1, 'L', 1)
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(2)
-        pdf.cell(60, 7, f"Start: {start_year} {start_q_str}", 0, 0)
-        pdf.cell(60, 7, f"Term: {ppa_term_years} Years", 0, 0)
-        pdf.cell(60, 7, f"Tariff: ${current_tariff:,.1f}/kWh", 0, 1)
-        pdf.cell(60, 7, f"Energy: {initial_gen_mwh_annual:,.1f} MWh", 0, 0)
-        pdf.cell(60, 7, f"CAPEX: {curr_sym}{capex_million_cop*inv_conv:,.1f} {currency_mode.split()[0]}", 0, 0)
-        pdf.cell(60, 7, f"Leverage: {debt_ratio*100:.0f}%", 0, 1)
-        pdf.ln(5)
-
-        pdf.set_fill_color(14, 47, 68)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(0, 10, "3. Executive Summary", 0, 1, 'L', 1)
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(2)
-        pdf.set_font("Arial", 'B', 12)
-        pdf.cell(45, 10, f"Eq Inv: {curr_sym}{equity_inv_disp:,.1f}", 1, 0, 'C')
-        pdf.cell(45, 10, f"IRR: {irr_levered:.1f}%", 1, 0, 'C')
-        pdf.cell(45, 10, f"NPV: {curr_sym}{npv_equity:,.1f}", 1, 0, 'C')
-        pdf.cell(45, 10, f"MOIC: {moic_levered:,.1f}x", 1, 1, 'C')
-        pdf.set_font("Arial", size=12)
-        pdf.ln(5)
-
-        pdf.set_fill_color(14, 47, 68)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(0, 10, "4. Financial Summary", 0, 1, 'L', 1)
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(2)
-        pdf.set_font("Arial", size=9)
-        headers = ["Year", "Rev", "EBITDA", "NetInc", "FCF"]
-        w = [25, 40, 40, 40, 40]
-        pdf.set_fill_color(200, 200, 200)
-        for i, h in enumerate(headers):
-            pdf.cell(w[i], 7, h, 1, 0, 'C', 1)
-        pdf.ln()
-
-        df_p = df_agg.copy()
-        df_p["EBIT"] = df_p["EBITDA_Disp"] - df_p["Depreciation_Disp"]
-        df_p["NetInc"] = df_p["EBIT"] - df_p["Interest_Disp"] - df_p["Tax_Disp"]
-
-        for _, row in df_p.iterrows():
-            pdf.cell(w[0], 7, str(int(row["Calendar_Year"])), 1, 0, 'C')
-            pdf.cell(w[1], 7, f"{row['Revenue_Disp']:,.1f}", 1, 0, 'R')
-            pdf.cell(w[2], 7, f"{row['EBITDA_Disp']:,.1f}", 1, 0, 'R')
-            pdf.cell(w[3], 7, f"{row['NetInc']:,.1f}", 1, 0, 'R')
-            pdf.cell(w[4], 7, f"{row['LFCF_Disp']:,.1f}", 1, 0, 'R')
-            pdf.ln()
-        return pdf.output(dest='S').encode('latin-1')
-
-    pdf_bytes = create_pdf(df_annual_dash, project_name, client_name, project_loc, symbol)
-    st.download_button(label="📄 Download PDF Report", data=pdf_bytes,
-                       file_name="pharos_memo.pdf", mime="application/pdf")
-
-# KPI cards
 k1, k2, k3, k4 = st.columns(4)
 k1.metric(T["kpi_eq"], f"{symbol}{equity_inv_disp:,.1f}")
 start_p = current_tariff * (1 - discount_rate)
@@ -725,10 +1227,9 @@ k4.metric(T["kpi_npv"], f"{symbol}{npv_equity:,.1f}")
 
 st.divider()
 
-# SCENARIO COMPARISON TABLE
+# Saved scenarios comparison
 if st.session_state["scenarios"]:
     st.markdown("### Saved Scenarios Comparison")
-
     df_scen = pd.DataFrame.from_dict(
         st.session_state["scenarios"],
         orient="index"
@@ -736,15 +1237,24 @@ if st.session_state["scenarios"]:
     df_scen.index.name = "Scenario"
     df_scen.reset_index(inplace=True)
 
+    cols_order = [
+        "Scenario",
+        "Equity_Investment",
+        "IRR_Levered_%",
+        "MOIC_x",
+        "Exit_Method",
+        "Exit_Year",
+        "Exit_Value_M_COP",
+        "Tariff_$perkWh",
+    ]
+    df_scen = df_scen[cols_order]
+
     st.dataframe(
         df_scen.style.format({
             "Equity_Investment": "{:,.1f}",
             "IRR_Levered_%": "{:,.1f}",
-            "IRR_Unlevered_%": "{:,.1f}",
             "MOIC_x": "{:,.2f}",
-            "NPV_Equity": "{:,.1f}",
-            "Coverage_%": "{:,.1f}",
-            "Debt_%": "{:,.1f}",
+            "Exit_Year": "{:.0f}",
             "Exit_Value_M_COP": "{:,.1f}",
             "Tariff_$perkWh": "{:,.1f}",
         }),
@@ -760,22 +1270,27 @@ with c1:
 with c2:
     st.markdown(f"### {T['card_eq']}")
     st.metric(T["kpi_moic"], f"{moic_levered:.1f}x")
-    st.caption(f"{T['lbl_lev']}: {debt_ratio*100:.0f}%" if enable_debt else T["lbl_nodebt"])
+    st.caption(f"{T['lbl_lev']}: {debt_ratio * 100:.0f}%" if enable_debt else T["lbl_nodebt"])
 with c3:
     st.markdown("### ⚖️ Leverage Boost")
     st.metric("Delta", f"{irr_levered - irr_unlevered:+.1f}%", delta_color="normal")
 
 st.divider()
 
+# Revenue proof
 with st.expander(T["rev_proof"], expanded=False):
     st.write("Revenue Proof: **Generation (MWh) × Price ($/kWh) = Revenue (M)**")
     proof_df = df_annual_dash[["Calendar_Year", "Generation_MWh", "Revenue_Disp"]].copy()
     proof_df.columns = ["Year", T["col_gen"], T["col_rev"]]
-    st.dataframe(proof_df.style.format({
-        "Year": "{:.0f}", T["col_gen"]: "{:,.1f}", T["col_rev"]: "{:,.1f}"
-    }))
+    st.dataframe(
+        proof_df.style.format({
+            "Year": "{:.0f}",
+            T["col_gen"]: "{:,.1f}",
+            T["col_rev"]: "{:,.1f}"
+        })
+    )
 
-# Extra expander to inspect tax base & loss carryforward (levered)
+# Tax diagnostics (levered)
 with st.expander("Tax Base & Loss Carryforward (Levered view)", expanded=False):
     tax_view = df_full[[
         "Calendar_Year",
@@ -783,6 +1298,8 @@ with st.expander("Tax Base & Loss Carryforward (Levered view)", expanded=False):
         "EBITDA_M_COP",
         "Interest_M_COP",
         "Depreciation_M_COP",
+        "Tax_Base_Lev_PreBenefit_M_COP",
+        "Capex_Tax_Benefit_M_COP",
         "Tax_Base_Lev_M_COP",
         "Tax_Base_Lev_Cum_M_COP",
         "Tax_M_COP",
@@ -792,7 +1309,9 @@ with st.expander("Tax Base & Loss Carryforward (Levered view)", expanded=False):
         "EBITDA_M_COP": "EBITDA",
         "Interest_M_COP": "Interest",
         "Depreciation_M_COP": "Depreciation",
-        "Tax_Base_Lev_M_COP": "Tax Base (Levered)",
+        "Tax_Base_Lev_PreBenefit_M_COP": "Tax Base Pre-Benefit",
+        "Capex_Tax_Benefit_M_COP": "CAPEX Benefit Used",
+        "Tax_Base_Lev_M_COP": "Tax Base After Benefit",
         "Tax_Base_Lev_Cum_M_COP": "Tax Base Cumulative",
         "Tax_M_COP": "Tax (Quarter)",
         "Tax_Lev_Cum_M_COP": "Tax Cumulative"
@@ -802,7 +1321,9 @@ with st.expander("Tax Base & Loss Carryforward (Levered view)", expanded=False):
             "EBITDA": "{:,.1f}",
             "Interest": "{:,.1f}",
             "Depreciation": "{:,.1f}",
-            "Tax Base (Levered)": "{:,.1f}",
+            "Tax Base Pre-Benefit": "{:,.1f}",
+            "CAPEX Benefit Used": "{:,.1f}",
+            "Tax Base After Benefit": "{:,.1f}",
             "Tax Base Cumulative": "{:,.1f}",
             "Tax (Quarter)": "{:,.1f}",
             "Tax Cumulative": "{:,.1f}",
@@ -817,16 +1338,15 @@ df_melt = df_annual_dash.melt(
     var_name="Type",
     value_name="CashFlow"
 )
-
-base = alt.Chart(df_melt).encode(
+base_chart = alt.Chart(df_melt).encode(
     x=alt.X('Type:N', title=None, axis=None),
     y=alt.Y('CashFlow:Q', title=f"Cash Flow ({currency_mode})")
 )
-bars = base.mark_bar().encode(
+bars = base_chart.mark_bar().encode(
     color=alt.Color('Type:N'),
     tooltip=['Calendar_Year', 'Type', 'CashFlow']
 )
-text = base.mark_text(dy=-10).encode(
+text = base_chart.mark_text(dy=-10).encode(
     text=alt.Text('CashFlow:Q', format='.1f')
 )
 chart = alt.layer(bars, text).properties(width=80).facet(
@@ -836,7 +1356,9 @@ chart = alt.layer(bars, text).properties(width=80).facet(
 st.altair_chart(chart, use_container_width=True)
 
 st.markdown("---")
-table_layout = st.radio("Table Layout", ["Horizontal (Years as Columns)", "Vertical (Years as Rows)"], horizontal=True)
+table_layout = st.radio("Table Layout",
+                        ["Horizontal (Years as Columns)", "Vertical (Years as Rows)"],
+                        horizontal=True)
 
 st.markdown(f"### {T['tab_pl']}")
 pnl_data = df_annual_full.copy()
@@ -845,32 +1367,38 @@ pnl_data["EBT_Disp"] = pnl_data["EBIT_Disp"] - pnl_data["Interest_Disp"]
 pnl_data["Net_Income_Disp"] = pnl_data["EBT_Disp"] - pnl_data["Tax_Disp"]
 
 pnl_view = pnl_data[[
-    "Calendar_Year", "Revenue_Disp", "OPEX_Disp", "Gross_Disp", "SGA_Disp",
-    "EBITDA_Disp", "Depreciation_Disp", "EBIT_Disp", "Interest_Disp",
-    "EBT_Disp", "Tax_Disp", "Net_Income_Disp"
+    "Calendar_Year", "Revenue_Disp", "OPEX_Disp", "Gross_Disp",
+    "SGA_Disp", "EBITDA_Disp", "Depreciation_Disp", "EBIT_Disp",
+    "Interest_Disp", "EBT_Disp", "Tax_Disp", "Net_Income_Disp"
 ]].set_index("Calendar_Year")
 
 if "Horizontal" in table_layout:
     pnl_view = pnl_view.T
     pnl_view.index = [
         "Revenue", "(-) OPEX", "(=) Gross Profit", "(-) SGA", "(=) EBITDA",
-        "(-) Depreciation", "(=) EBIT", "(-) Interest", "(=) EBT", "(-) Taxes", "(=) Net Income"
+        "(-) Depreciation", "(=) EBIT", "(-) Interest",
+        "(=) EBT", "(-) Taxes", "(=) Net Income"
     ]
     st.dataframe(pnl_view.style.format("{:,.1f}"))
 else:
     st.dataframe(pnl_view.style.format("{:,.1f}"))
 
 st.markdown(f"### {T['tab_full']}")
-cf_cols = ["Generation_MWh", "Revenue_Disp", "OPEX_Disp", "EBITDA_Disp", "UFCF_Disp", "LFCF_Disp"]
+cf_cols = ["Generation_MWh", "Revenue_Disp", "OPEX_Disp",
+           "EBITDA_Disp", "UFCF_Disp", "LFCF_Disp"]
 cf_view = df_annual_full.set_index("Calendar_Year")[cf_cols]
 
 if "Horizontal" in table_layout:
     cf_view = cf_view.T
-    cf_view.index = ["Generation (MWh)", "Revenue", "(-) OPEX", "(=) EBITDA", "Unlevered FCF", "Levered FCF"]
+    cf_view.index = ["Generation (MWh)", "Revenue", "(-) OPEX",
+                     "(=) EBITDA", "Unlevered FCF", "Levered FCF"]
     st.dataframe(cf_view.style.format("{:,.1f}"))
 else:
     st.dataframe(cf_view.style.format("{:,.1f}"))
 
+# ------------------------------------------------------
+# SIMULATION
+# ------------------------------------------------------
 st.markdown("---")
 st.header(T["sim_title"])
 with st.expander("Config", expanded=True):
@@ -879,9 +1407,14 @@ with st.expander("Config", expanded=True):
         sim_years = st.slider(T["s5_year"], 2, ppa_term_years, (5, 10))
     with c_sim2:
         base_val = int(final_exit_val_cop) if final_exit_val_cop > 0 else 100
-        min_v = st.number_input(f"{T['sim_min']} (COP)", value=max(10, base_val - 50), step=10)
-        max_v = st.number_input(f"{T['sim_max']} (COP)", value=base_val + 50, step=10)
+        min_v = st.number_input(f"{T['sim_min']} (COP)",
+                                value=max(10, base_val - 50),
+                                step=10)
+        max_v = st.number_input(f"{T['sim_max']} (COP)",
+                                value=base_val + 50,
+                                step=10)
         step_v = st.number_input(T["sim_step"], value=10, step=1)
+
 
 def calculate_sim_irr(y_exit, v_exit_cop):
     exit_q = construction_quarters + (y_exit * 4)
@@ -889,11 +1422,12 @@ def calculate_sim_irr(y_exit, v_exit_cop):
         return 0
     df_slice = df_full.iloc[:exit_q].copy()
     last_r = df_slice.iloc[-1]
-    gain = v_exit_cop - last_r["Book_Value_M_COP"]
-    tax = gain * cap_gains_rate if gain > 0 else 0
-    net_exit_cop = v_exit_cop - last_r["Debt_Balance_M_COP"] - tax
+    gain_local = v_exit_cop - last_r["Book_Value_M_COP"]
+    tax_local = gain_local * cap_gains_rate if gain_local > 0 else 0
+    net_exit_cop = v_exit_cop - last_r["Debt_Balance_M_COP"] - tax_local
     df_slice.at[len(df_slice) - 1, "LFCF_M_COP"] += net_exit_cop
     return get_irr(df_slice["LFCF_M_COP"])
+
 
 if st.button(T["sim_run"]):
     years_to_sim = list(range(sim_years[0], sim_years[1] + 1))
@@ -901,25 +1435,80 @@ if st.button(T["sim_run"]):
     sim_data = []
     for v in vals_to_sim:
         for y in years_to_sim:
-            sim_data.append({T["s5_year"]: y, T["s5_val"]: v, "IRR": round(calculate_sim_irr(y, v), 1)})
+            sim_data.append({
+                "ExitYear": y,
+                "ExitValue": v,
+                "IRR": round(calculate_sim_irr(y, v), 1)
+            })
 
     sim_df = pd.DataFrame(sim_data)
+
     heatmap = alt.Chart(sim_df).mark_rect().encode(
-        x=alt.X(f'{T["s5_val"]}:O', title=T["s5_val"]),
-        y=alt.Y(f'{T["s5_year"]}:O', title=T["s5_year"]),
+        x=alt.X('ExitValue:O', title=T["s5_val"]),
+        y=alt.Y('ExitYear:O', title=T["s5_year"]),
         color=alt.Color(
             'IRR:Q',
             scale=alt.Scale(scheme='redyellowgreen'),
             title='IRR %'
         ),
-        tooltip=[T["s5_year"], T["s5_val"], 'IRR']
+        tooltip=['ExitYear', 'ExitValue', 'IRR']
     ).properties(title=T["sim_chart"])
 
-    text = heatmap.mark_text(
+    text_sim = heatmap.mark_text(
         baseline='middle'
     ).encode(
         text=alt.Text('IRR:Q', format='.1f'),
         color=alt.value('black')
     )
 
-    st.altair_chart(heatmap + text, use_container_width=True)
+    st.altair_chart(heatmap + text_sim, use_container_width=True)
+
+    # Sensitivity summary around base IRR
+    target_irr = irr_levered
+    lower_bound = target_irr * 0.9
+    upper_bound = target_irr * 1.1
+
+    close_df = sim_df[
+        (sim_df["IRR"] >= lower_bound) &
+        (sim_df["IRR"] <= upper_bound)
+    ].copy()
+
+    if not close_df.empty:
+        close_df["ΔIRR_vs_Base"] = (close_df["IRR"] - target_irr).round(1)
+        close_df = close_df.sort_values(
+            by="ΔIRR_vs_Base",
+            key=lambda s: s.abs()
+        )
+        # Rename to human-readable labels for display
+        close_df = close_df.rename(columns={
+            "ExitYear": "Exit Year",
+            "ExitValue": "Exit Value (M COP)"
+        })
+        close_df = close_df[[
+            "Exit Year", "Exit Value (M COP)", "IRR", "ΔIRR_vs_Base"
+        ]].head(15)
+
+        st.markdown(f"#### {T['sim_match_title']}")
+        st.caption(
+            f"Base case IRR: {target_irr:.1f}%. "
+            f"Showing alternatives with IRR between {lower_bound:.1f}% and {upper_bound:.1f}%."
+        )
+        st.dataframe(
+            close_df.style.format({
+                "Exit Year": "{:.0f}",
+                "Exit Value (M COP)": "{:,.1f}",
+                "IRR": "{:.1f}",
+                "ΔIRR_vs_Base": "{:+.1f}"
+            }),
+            use_container_width=True
+        )
+    else:
+        close_df = None
+        st.info(
+            f"No simulation points found with IRR within ±10% of base case ({target_irr:.1f}%). "
+            f"Try widening the year/value ranges."
+        )
+
+    # Store for PDF
+    st.session_state["sim_df"] = sim_df
+    st.session_state["sim_close_df"] = close_df
