@@ -799,34 +799,57 @@ with st.sidebar.expander(T["s6_title"], expanded=False):
         st.success(f"Uploaded {len(uploaded_files)} file(s) to project '{active_proj}'.")
 
     # List existing files for this project
+
     # List existing files for this project
-if files_list:
-    st.markdown("##### Files stored for this project")
-    for idx, fm in enumerate(files_list):
-        fname = fm.get("name", "Unnamed")
-        ftype = fm.get("type", "unknown")
-        fpath = fm.get("path")
+    if files_list:
+        st.markdown("##### Files stored for this project")
 
-        c1, c2 = st.columns([4, 1])
-        with c1:
-            st.write(f"📄 **{fname}**  _({ftype})_")
-        with c2:
-            if fpath and os.path.exists(fpath):
-                with open(fpath, "rb") as f:
-                    st.download_button(
-                        label="⬇️ Download",
-                        data=f.read(),
-                        file_name=fname,
-                        mime=ftype or "application/octet-stream",
-                        # <–– key is now guaranteed unique per row
-                        key=f"download_{active_proj}_{idx}"
-                    )
-            else:
-                st.caption("File missing on disk.")
-else:
-    st.caption("No files uploaded yet for this project.")
+        # We iterate with index so we can safely delete entries
+        for idx, fm in enumerate(list(files_list)):  # list() to avoid mutation issues
+            fname = fm.get("name", "Unnamed")
+            ftype = fm.get("type", "unknown")
+            fpath = fm.get("path")
 
+            c1, c2, c3 = st.columns([4, 1, 1])
 
+            with c1:
+                st.write(f"📄 **{fname}**  _({ftype})_")
+
+            # Download button — key uses idx so duplicates are allowed
+            with c2:
+                if fpath and os.path.exists(fpath):
+                    with open(fpath, "rb") as f:
+                        st.download_button(
+                            label="⬇️",
+                            data=f.read(),
+                            file_name=fname,
+                            mime=ftype or "application/octet-stream",
+                            key=f"download_{active_proj}_{idx}"
+                        )
+                else:
+                    st.caption("Missing")
+
+            # Delete button
+            with c3:
+                if st.button("🗑️", key=f"delete_{active_proj}_{idx}"):
+                    # Remove file from disk if still present
+                    if fpath and os.path.exists(fpath):
+                        try:
+                            os.remove(fpath)
+                        except Exception as e:
+                            st.warning(f"Could not delete file from disk: {e}")
+
+                    # Remove from metadata list
+                    try:
+                        del files_list[idx]
+                        save_projects_to_disk()
+                    except Exception as e:
+                        st.warning(f"Error updating file list: {e}")
+
+                    st.success(f"File '{fname}' deleted from project '{active_proj}'.")
+                    st.rerun()
+    else:
+        st.caption("No files uploaded yet for this project.")
 
 
 # ------------------------------------------------------
@@ -1786,6 +1809,7 @@ if st.button(T["sim_run"]):
     # Store for PDF
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
 
 
