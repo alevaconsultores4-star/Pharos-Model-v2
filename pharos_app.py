@@ -1485,17 +1485,22 @@ with col_head2:
     )
 
     # Use scenario name (if any) for the PDF file name
+    project_label = st.session_state.get("active_project", "").strip()
+    project_label = project_label.replace(" ", "_") or "Project"
+
     scen_label = st.session_state.get("scenario_name", "").strip()
-    if not scen_label:
-        scen_label = "memo"
-    safe_name = scen_label.replace(" ", "_")
+    scen_label = scen_label.replace(" ", "_") or "memo"
+
+    file_name = f"{project_label}__{scen_label}.pdf"
+
 
     st.download_button(
         label="📄 Download PDF Report",
         data=pdf_bytes,
-        file_name=f"{safe_name}.pdf",
+        file_name=file_name,
         mime="application/pdf"
     )
+
 
 
 k1, k2, k3, k4 = st.columns(4)
@@ -1809,6 +1814,7 @@ if st.button(T["sim_run"]):
     # Store for PDF
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
 
 
