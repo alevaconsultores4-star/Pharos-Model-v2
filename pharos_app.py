@@ -15,7 +15,21 @@ from fpdf import FPDF
 # ------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Pharos Capital: BTM Model", page_icon="🦅")
 
-SCENARIO_FILE = "pharos_scenarios.json"
+PROJECTS_FILE = "pharos_projects.json"
+
+# Keys we want to persist per project
+PROJECT_INPUT_KEYS = [
+    "project_name", "client_name", "project_loc",
+    "start_year", "start_q_str",
+    "ppa_term", "link_inf", "tariff_val", "inf_val", "disc_val", "esc_val",
+    "gen_val", "cons_val", "deg_val",
+    "const_q", "capex_val", "opex_val", "oinf_val", "sga_val", "sga_const_val",
+    "tax_val", "cg_val", "dep_val", "ftt_val", "ica_on", "ica_rate",
+    "debt_on", "dr_val", "int_val", "tenor_val", "fee_val", "grace_val",
+    "exit_method", "exit_yr", "exit_mult_val", "exit_asset_val", "ke_val",
+    "fx_rate_current",
+    "capex_benefit_on", "capex_benefit_years", "capex_benefit_capex_pct"
+]
 
 
 # ------------------------------------------------------
@@ -92,6 +106,13 @@ def set_base_case():
     st.session_state.ke_val = 12.0
     st.session_state.uploaded_files = []
     st.session_state.fx_rate_current = 4100.0
+    # Default project identifiers
+    if "project_name" not in st.session_state:
+        st.session_state.project_name = "Hampton Inn Bogota - Aeropuerto"
+    if "client_name" not in st.session_state:
+        st.session_state.client_name = "Hampton Inn"
+    if "project_loc" not in st.session_state:
+        st.session_state.project_loc = "Bogota, Colombia"
 
 
 if "ppa_term" not in st.session_state:
@@ -99,31 +120,71 @@ if "ppa_term" not in st.session_state:
 
 
 # ------------------------------------------------------
-# SCENARIO PERSISTENCE (DISK)
+# PROJECT PERSISTENCE (DISK)
 # ------------------------------------------------------
-def load_scenarios_from_disk():
-    if os.path.exists(SCENARIO_FILE):
+def load_projects_from_disk():
+    if os.path.exists(PROJECTS_FILE):
         try:
-            with open(SCENARIO_FILE, "r", encoding="utf-8") as f:
+            with open(PROJECTS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
+                # Ensure each project has inputs & scenarios keys
+                for k, v in data.items():
+                    if "inputs" not in v:
+                        v["inputs"] = {}
+                    if "scenarios" not in v:
+                        v["scenarios"] = {}
                 return data
         except Exception:
             pass
     return {}
 
 
-def save_scenarios_to_disk():
+def save_projects_to_disk():
     try:
-        with open(SCENARIO_FILE, "w", encoding="utf-8") as f:
-            json.dump(st.session_state["scenarios"], f, ensure_ascii=False, indent=2)
+        with open(PROJECTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(st.session_state["projects"], f, ensure_ascii=False, indent=2)
     except Exception as e:
-        st.warning(f"Could not save scenarios to disk: {e}")
+        st.warning(f"Could not save projects to disk: {e}")
 
 
-if "scenarios" not in st.session_state:
-    st.session_state["scenarios"] = load_scenarios_from_disk()
+if "projects" not in st.session_state:
+    st.session_state["projects"] = load_projects_from_disk()
 
+# Ensure at least one project exists
+if not st.session_state["projects"]:
+    st.session_state["projects"]["Default Project"] = {"inputs": {}, "scenarios": {}}
+
+if "active_project" not in st.session_state:
+    st.session_state["active_project"] = list(st.session_state["projects"].keys())[0]
+
+
+def apply_project_inputs(project_name: str):
+    """Load saved inputs for a project into session_state."""
+    proj = st.session_state["projects"].get(project_name, {})
+    inputs = proj.get("inputs", {})
+    for k, v in inputs.items():
+        st.session_state[k] = v
+
+
+def save_current_inputs_to_project():
+    """Capture current session_state inputs into active project's 'inputs'."""
+    proj_name = st.session_state["active_project"]
+    proj_dict = st.session_state["projects"].setdefault(
+        proj_name, {"inputs": {}, "scenarios": {}}
+    )
+    inputs = {}
+    for key in PROJECT_INPUT_KEYS:
+        if key in st.session_state:
+            inputs[key] = st.session_state[key]
+    proj_dict["inputs"] = inputs
+    save_projects_to_disk()
+
+
+# Apply project inputs only once on first load
+if "projects_loaded" not in st.session_state:
+    apply_project_inputs(st.session_state["active_project"])
+    st.session_state["projects_loaded"] = True
 
 # ------------------------------------------------------
 # CUSTOM STYLING
@@ -325,7 +386,49 @@ T = LANG[sel_lang]
 # ------------------------------------------------------
 if st.sidebar.button("↺ Reset to Base Case"):
     set_base_case()
+    save_current_inputs_to_project()
     st.rerun()
+
+
+# ------------------------------------------------------
+# PROJECT SELECTION (MULTI-PROJECT HANDLING)
+# ------------------------------------------------------
+st.markdown("### Active Project")
+
+proj_names = sorted(st.session_state["projects"].keys())
+current_proj = st.session_state["active_project"]
+if current_proj not in proj_names:
+    current_proj = proj_names[0]
+
+col_p1, col_p2 = st.columns([3, 2])
+with col_p1:
+    selected_proj = st.selectbox(
+        "Select project",
+        proj_names,
+        index=proj_names.index(current_proj)
+    )
+with col_p2:
+    new_proj_name = st.text_input("New project name", value="", key="new_project_name")
+    if st.button("➕ Create project"):
+        name = new_proj_name.strip()
+        if name:
+            if name not in st.session_state["projects"]:
+                st.session_state["projects"][name] = {"inputs": {}, "scenarios": {}}
+                st.session_state["active_project"] = name
+                save_projects_to_disk()
+                apply_project_inputs(name)
+                st.success(f"Project '{name}' created.")
+                st.rerun()
+            else:
+                st.warning("A project with that name already exists.")
+
+# If user changed project, switch and rerun
+if selected_proj != current_proj:
+    st.session_state["active_project"] = selected_proj
+    apply_project_inputs(selected_proj)
+    st.rerun()
+
+st.markdown("---")
 
 
 # ------------------------------------------------------
@@ -342,12 +445,23 @@ with col_title:
 
 c_proj1, c_proj2, c_proj3 = st.columns(3)
 with c_proj1:
-    project_name = st.text_input(T["header_proj"],
-                                 value="Hampton Inn Bogota - Aeropuerto")
+    project_name = st.text_input(
+        T["header_proj"],
+        key="project_name",
+        value=st.session_state.get("project_name", "Hampton Inn Bogota - Aeropuerto")
+    )
 with c_proj2:
-    client_name = st.text_input(T["header_client"], value="Hampton Inn")
+    client_name = st.text_input(
+        T["header_client"],
+        key="client_name",
+        value=st.session_state.get("client_name", "Hampton Inn")
+    )
 with c_proj3:
-    project_loc = st.text_input(T["header_loc"], value="Bogota, Colombia")
+    project_loc = st.text_input(
+        T["header_loc"],
+        key="project_loc",
+        value=st.session_state.get("project_loc", "Bogota, Colombia")
+    )
 
 st.markdown("---")
 
@@ -378,9 +492,19 @@ with st.sidebar.expander(T["s1_title"], expanded=False):
     st.markdown(f"**{T['s1_time']}**")
     c_start1, c_start2 = st.columns(2)
     with c_start1:
-        start_year = st.number_input(T["s1_year"], value=2026, step=1)
+        start_year = st.number_input(T["s1_year"],
+                                     value=int(st.session_state.get("start_year", 2026)),
+                                     step=1)
     with c_start2:
-        start_q_str = st.selectbox(T["s1_q"], ["Q1", "Q2", "Q3", "Q4"], index=0)
+        start_q_str = st.selectbox(
+            T["s1_q"],
+            ["Q1", "Q2", "Q3", "Q4"],
+            index=["Q1", "Q2", "Q3", "Q4"].index(
+                st.session_state.get("start_q_str", "Q1")
+            )
+        )
+    st.session_state["start_year"] = start_year
+    st.session_state["start_q_str"] = start_q_str
     start_q_num = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}[start_q_str]
 
     st.markdown("---")
@@ -499,13 +623,23 @@ with st.sidebar.expander(T["s3_title"], expanded=False):
 
     st.markdown("---")
     st.markdown("**Ley 1715 - CAPEX Tax Benefit**")
-    enable_capex_benefit = st.checkbox(T["s3_capex_ben"], value=False)
+    enable_capex_benefit = st.checkbox(T["s3_capex_ben"], key="capex_benefit_on", value=False)
     if enable_capex_benefit:
-        capex_benefit_years = st.slider(T["s3_capex_years"], 1, 15, value=10)
-        capex_benefit_capex_pct = st.slider(T["s3_capex_pct"], 0, 100, value=100) / 100.0
+        capex_benefit_years = st.slider(
+            T["s3_capex_years"], 1, 15,
+            value=int(st.session_state.get("capex_benefit_years", 10)),
+            key="capex_benefit_years"
+        )
+        capex_benefit_capex_pct = st.slider(
+            T["s3_capex_pct"], 0, 100,
+            value=int(st.session_state.get("capex_benefit_capex_pct", 100)),
+            key="capex_benefit_capex_pct"
+        ) / 100.0
     else:
         capex_benefit_years = 0
         capex_benefit_capex_pct = 0.0
+        st.session_state["capex_benefit_years"] = 0
+        st.session_state["capex_benefit_capex_pct"] = 0.0
 
 
 # ------------------------------------------------------
@@ -564,6 +698,9 @@ with st.sidebar.expander(T["s5_title"], expanded=False):
                                          key="ke_val",
                                          step=0.5,
                                          format="%.1f") / 100
+
+# Save inputs for this project (auto)
+save_current_inputs_to_project()
 
 
 # ------------------------------------------------------
@@ -879,9 +1016,13 @@ symbol = "$" if "USD" in currency_mode else ""
 
 
 # ------------------------------------------------------
-# SCENARIO MANAGEMENT
+# SCENARIO MANAGEMENT (PER PROJECT)
 # ------------------------------------------------------
 st.markdown("### Scenario Management")
+
+active_proj = st.session_state["active_project"]
+proj_entry = st.session_state["projects"].setdefault(active_proj, {"inputs": {}, "scenarios": {}})
+scenarios_dict = proj_entry.setdefault("scenarios", {})
 
 # --- Save scenario ---
 scenario_name = st.text_input(
@@ -894,43 +1035,44 @@ if st.button("💾 Save current scenario"):
     if not scenario_name.strip():
         st.warning("Please enter a scenario name before saving.")
     else:
+        # 1st-year PPA price to client (COP $/kWh)
         ppa_price_year1_cop = current_tariff * (1 - discount_rate)
-        st.session_state["scenarios"][scenario_name] = {
+
+        scenarios_dict[scenario_name] = {
             "Equity_Investment": equity_inv_disp,
             "IRR_Levered_%": irr_levered,
             "MOIC_x": moic_levered,
             "Exit_Method": dash_exit_strategy,
             "Exit_Year": dash_exit_year,
             "Exit_Value_M_COP": final_exit_val_cop,
+            "Client_Tariff_$perkWh": current_tariff,
             "PPA_Year1_$perkWh": ppa_price_year1_cop,
-            "PPA_Years": ppa_term_years,          
+            "PPA_Years": ppa_term_years,
         }
-        save_scenarios_to_disk()
-        st.success(f"Scenario '{scenario_name}' saved.")
+        save_projects_to_disk()
+        st.success(f"Scenario '{scenario_name}' saved for project '{active_proj}'.")
 
-
-# --- Delete scenario ---
-if st.session_state["scenarios"]:
-    st.markdown("#### Delete saved scenario")
+# --- Delete scenario (per project) ---
+if scenarios_dict:
+    st.markdown("#### Delete saved scenario (current project)")
     col_del1, col_del2 = st.columns([3, 1])
 
     with col_del1:
         scenario_to_delete = st.selectbox(
             "Select scenario to delete",
-            list(st.session_state["scenarios"].keys()),
+            list(scenarios_dict.keys()),
             key="scenario_to_delete"
         )
 
     with col_del2:
         if st.button("🗑️ Delete selected scenario"):
-            if scenario_to_delete in st.session_state["scenarios"]:
-                del st.session_state["scenarios"][scenario_to_delete]
-                save_scenarios_to_disk()
-                st.success(f"Scenario '{scenario_to_delete}' deleted.")
+            if scenario_to_delete in scenarios_dict:
+                del scenarios_dict[scenario_to_delete]
+                save_projects_to_disk()
+                st.success(f"Scenario '{scenario_to_delete}' deleted from project '{active_proj}'.")
                 st.rerun()
 else:
-    st.caption("No saved scenarios to delete.")
-
+    st.caption("No saved scenarios for this project.")
 
 # ------------------------------------------------------
 # PDF HELPER FUNCTIONS (CHARTS)
@@ -1230,11 +1372,11 @@ k4.metric(T["kpi_npv"], f"{symbol}{npv_equity:,.1f}")
 
 st.divider()
 
-# Saved scenarios comparison
-if st.session_state["scenarios"]:
-    st.markdown("### Saved Scenarios Comparison")
+# Saved scenarios comparison (per project)
+if scenarios_dict:
+    st.markdown("### Saved Scenarios Comparison (current project)")
     df_scen = pd.DataFrame.from_dict(
-        st.session_state["scenarios"],
+        scenarios_dict,
         orient="index"
     )
     df_scen.index.name = "Scenario"
@@ -1242,7 +1384,7 @@ if st.session_state["scenarios"]:
 
     cols_order = [
         "Scenario",
-        "PPA_Years",          # 🔹 NEW COLUMN
+        "PPA_Years",
         "Equity_Investment",
         "IRR_Levered_%",
         "MOIC_x",
@@ -1250,35 +1392,36 @@ if st.session_state["scenarios"]:
         "Exit_Year",
         "Exit_Value_M_COP",
         "PPA_Year1_$perkWh",
+        "Client_Tariff_$perkWh",
     ]
 
-    # Make sure all columns exist (old scenarios won’t have PPA_Years)
     for col in cols_order:
         if col not in df_scen.columns:
             df_scen[col] = np.nan
-    if "PPA_Year1_$perkWh" in df_scen.columns and "Tariff_$perkWh" in df_scen.columns:
+
+    # Backward compatibility: if old Tariff_$perkWh exists, map to PPA_Year1
+    if "Tariff_$perkWh" in df_scen.columns:
         df_scen["PPA_Year1_$perkWh"] = df_scen["PPA_Year1_$perkWh"].fillna(
             df_scen["Tariff_$perkWh"]
         )
-        
-    df_scen = df_scen[cols_order]
 
+    df_scen = df_scen[cols_order]
 
     st.dataframe(
         df_scen.style.format({
-            "PPA_Years": "{:.0f}",              # 🔹 NEW
+            "PPA_Years": "{:.0f}",
             "Equity_Investment": "{:,.1f}",
             "IRR_Levered_%": "{:,.1f}",
             "MOIC_x": "{:,.2f}",
             "Exit_Year": "{:.0f}",
             "Exit_Value_M_COP": "{:,.1f}",
             "PPA_Year1_$perkWh": "{:,.1f}",
+            "Client_Tariff_$perkWh": "{:,.1f}",
         }),
         use_container_width=True
     )
-
 else:
-    st.markdown("_No scenarios saved yet. Use **'Save current scenario'** above to store one._")
+    st.markdown("_No scenarios saved yet for this project. Use **'Save current scenario'** above to store one._")
 
 c1, c2, c3 = st.columns(3)
 with c1:
@@ -1529,8 +1672,3 @@ if st.button(T["sim_run"]):
     # Store for PDF
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
-
-
-
-
-
