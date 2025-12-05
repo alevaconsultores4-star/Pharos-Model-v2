@@ -17,6 +17,9 @@ st.set_page_config(layout="wide", page_title="Pharos Capital: BTM Model", page_i
 
 PROJECTS_FILE = "pharos_projects.json"
 
+PROJECTS_FILE = "pharos_projects.json"
+ATTACHMENTS_DIR = "pharos_attachments"
+
 # Keys we want to persist per project
 PROJECT_INPUT_KEYS = [
     "project_name", "client_name", "project_loc",
@@ -128,12 +131,14 @@ def load_projects_from_disk():
             with open(PROJECTS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
-                # Ensure each project has inputs & scenarios keys
+                # Ensure each project has inputs, scenarios and files keys
                 for k, v in data.items():
                     if "inputs" not in v:
                         v["inputs"] = {}
                     if "scenarios" not in v:
                         v["scenarios"] = {}
+                    if "files" not in v:
+                        v["files"] = []
                 return data
         except Exception:
             pass
@@ -153,7 +158,11 @@ if "projects" not in st.session_state:
 
 # Ensure at least one project exists
 if not st.session_state["projects"]:
-    st.session_state["projects"]["Default Project"] = {"inputs": {}, "scenarios": {}}
+    st.session_state["projects"]["Default Project"] = {
+        "inputs": {},
+        "scenarios": {},
+        "files": []
+    }
 
 if "active_project" not in st.session_state:
     st.session_state["active_project"] = list(st.session_state["projects"].keys())[0]
@@ -734,7 +743,7 @@ save_current_inputs_to_project()
 
 
 # ------------------------------------------------------
-# 6. DOCUMENT AUDIT TRAIL
+# 6. DOCUMENT AUDIT TRAIL (per project)
 # ------------------------------------------------------
 with st.sidebar.expander(T["s6_title"], expanded=False):
     uploaded_files = st.file_uploader(
@@ -743,17 +752,78 @@ with st.sidebar.expander(T["s6_title"], expanded=False):
         accept_multiple_files=True
     )
 
-if uploaded_files:
-    if 'uploaded_files' not in st.session_state:
-        st.session_state['uploaded_files'] = []
-    for file in uploaded_files:
-        file_info = {
-            "name": file.name,
-            "type": file.type,
-            "data": file.read()
-        }
-        if file_info['name'] not in [f['name'] for f in st.session_state['uploaded_files']]:
-            st.session_state['uploaded_files'].append(file_info)
+    # Ensure current project record has a 'files' list
+    active_proj = st.session_state["active_project"]
+    proj_entry = st.session_state["projects"].setdefault(
+        active_proj,
+        {"inputs": {}, "scenarios": {}, "files": []}
+    )
+    files_list = proj_entry.setdefault("files", [])
+
+    # Handle new uploads
+    if uploaded_files:
+        os.makedirs(ATTACHMENTS_DIR, exist_ok=True)
+        proj_folder = os.path.join(
+            ATTACHMENTS_DIR,
+            active_proj.replace(" ", "_")
+        )
+        os.makedirs(proj_folder, exist_ok=True)
+
+        for file in uploaded_files:
+            raw_data = file.read()
+
+            # Build a safe, non-colliding path
+            base_name, ext = os.path.splitext(file.name)
+            save_path = os.path.join(proj_folder, file.name)
+            counter = 1
+            while os.path.exists(save_path):
+                save_path = os.path.join(
+                    proj_folder,
+                    f"{base_name}_{counter}{ext}"
+                )
+                counter += 1
+
+            # Write to disk
+            with open(save_path, "wb") as f:
+                f.write(raw_data)
+
+            # Add metadata if not already there
+            if not any(fm.get("path") == save_path for fm in files_list):
+                files_list.append({
+                    "name": file.name,
+                    "type": file.type,
+                    "path": save_path
+                })
+
+        save_projects_to_disk()
+        st.success(f"Uploaded {len(uploaded_files)} file(s) to project '{active_proj}'.")
+
+    # List existing files for this project
+    if files_list:
+        st.markdown("##### Files stored for this project")
+        for fm in files_list:
+            fname = fm.get("name", "Unnamed")
+            ftype = fm.get("type", "unknown")
+            fpath = fm.get("path")
+
+            c1, c2 = st.columns([4, 1])
+            with c1:
+                st.write(f"📄 **{fname}**  _({ftype})_")
+            with c2:
+                if fpath and os.path.exists(fpath):
+                    with open(fpath, "rb") as f:
+                        st.download_button(
+                            label="⬇️ Download",
+                            data=f.read(),
+                            file_name=fname,
+                            mime=ftype or "application/octet-stream",
+                            key=f"download_{active_proj}_{fname}"
+                        )
+                else:
+                    st.caption("File missing on disk.")
+    else:
+        st.caption("No files uploaded yet for this project.")
+
 
 
 # ------------------------------------------------------
@@ -1051,7 +1121,10 @@ symbol = "$" if "USD" in currency_mode else ""
 st.markdown("### Scenario Management")
 
 active_proj = st.session_state["active_project"]
-proj_entry = st.session_state["projects"].setdefault(active_proj, {"inputs": {}, "scenarios": {}})
+proj_entry = st.session_state["projects"].setdefault(
+    active_proj,
+    {"inputs": {}, "scenarios": {}, "files": []}
+)
 scenarios_dict = proj_entry.setdefault("scenarios", {})
 
 # --- Save scenario ---
@@ -1710,4 +1783,5 @@ if st.button(T["sim_run"]):
     # Store for PDF
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
