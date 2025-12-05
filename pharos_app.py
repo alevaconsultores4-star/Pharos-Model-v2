@@ -421,6 +421,36 @@ with col_p2:
                 st.rerun()
             else:
                 st.warning("A project with that name already exists.")
+                
+# --- Delete project ---
+if len(st.session_state["projects"]) > 1:
+    st.markdown("#### Delete project")
+    col_dp1, col_dp2 = st.columns([3, 1])
+
+    with col_dp1:
+        project_to_delete = st.selectbox(
+            "Select project to delete",
+            proj_names,
+            key="project_to_delete"
+        )
+
+    with col_dp2:
+        if st.button("🗑️ Delete selected project"):
+            if project_to_delete in st.session_state["projects"]:
+                # Remove project
+                del st.session_state["projects"][project_to_delete]
+
+                # If we deleted the active project, move active to another remaining one
+                if st.session_state["active_project"] == project_to_delete:
+                    remaining = list(st.session_state["projects"].keys())
+                    if remaining:
+                        st.session_state["active_project"] = remaining[0]
+
+                save_projects_to_disk()
+                st.success(f"Project '{project_to_delete}' deleted.")
+                st.rerun()
+else:
+    st.caption("At least one project must exist. Cannot delete the last project.")
 
 # If user changed project, switch and rerun
 if selected_proj != current_proj:
@@ -1354,12 +1384,20 @@ with col_head2:
         sim_df_local=sim_df_for_pdf,
         close_df_local=close_df_for_pdf
     )
+
+    # Use scenario name (if any) for the PDF file name
+    scen_label = st.session_state.get("scenario_name", "").strip()
+    if not scen_label:
+        scen_label = "memo"
+    safe_name = scen_label.replace(" ", "_")
+
     st.download_button(
         label="📄 Download PDF Report",
         data=pdf_bytes,
-        file_name="pharos_memo.pdf",
+        file_name=f"{safe_name}.pdf",
         mime="application/pdf"
     )
+
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric(T["kpi_eq"], f"{symbol}{equity_inv_disp:,.1f}")
@@ -1672,3 +1710,4 @@ if st.button(T["sim_run"]):
     # Store for PDF
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
