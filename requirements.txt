@@ -6,3 +6,4 @@ altair
 fpdf
 matplotlib
 openpyxl
+xlsxwriter
