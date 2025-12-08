@@ -5,3 +5,4 @@ numpy-financial
 altair
 fpdf
 matplotlib
+openpyxl
