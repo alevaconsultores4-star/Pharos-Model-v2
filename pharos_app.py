@@ -1238,9 +1238,7 @@ def generate_excel_file():
     """
     output = io.BytesIO()
 
-    # Use the engine we detected at import time (xlsxwriter if available,
-    # otherwise openpyxl). If openpyxl is also missing, you MUST add it
-    # to your requirements.txt.
+    # Use the engine we detected earlier
     with pd.ExcelWriter(output, engine=DEFAULT_EXCEL_ENGINE) as writer:
         # 1) Inputs sheet from session_state
         inputs_rows = []
@@ -1258,7 +1256,7 @@ def generate_excel_file():
         # 3) Annual summary
         df_annual_full.to_excel(writer, sheet_name="Annual_Summary", index=False)
 
-        # 4) P&L (annual) – as numbers
+        # 4) P&L (annual)
         pnl_data = df_annual_full.copy()
         pnl_data["EBIT_Disp"] = pnl_data["EBITDA_Disp"] - pnl_data["Depreciation_Disp"]
         pnl_data["EBT_Disp"] = pnl_data["EBIT_Disp"] - pnl_data["Interest_Disp"]
@@ -1282,16 +1280,24 @@ def generate_excel_file():
         tax_view_xls.to_excel(writer, sheet_name="Tax_Diagnostics", index=False)
 
         # 6) Debt schedule (opening, interest, principal, closing)
-        debt_cols = [
+        # We reconstruct opening from previous closing
+        debt_sched = df_full[[
+            "Calendar_Year",
+            "Quarter",
+            "Interest_M_COP",
+            "Debt_Balance_M_COP"
+        ]].copy()
+        debt_sched["Opening_Debt_M_COP"] = debt_sched["Debt_Balance_M_COP"].shift(1).fillna(total_debt_principal)
+        debt_sched["Principal_M_COP"] = debt_sched["Opening_Debt_M_COP"] - debt_sched["Debt_Balance_M_COP"]
+        debt_sched = debt_sched[[
             "Calendar_Year",
             "Quarter",
             "Opening_Debt_M_COP",
             "Interest_M_COP",
             "Principal_M_COP",
             "Debt_Balance_M_COP"
-        ]
-        debt_df = df_full[debt_cols].copy()
-        debt_df.to_excel(writer, sheet_name="Debt_Schedule", index=False)
+        ]]
+        debt_sched.to_excel(writer, sheet_name="Debt_Schedule", index=False)
 
         # 7) Scenarios (for this project), if any
         active_proj = st.session_state["active_project"]
@@ -1333,14 +1339,16 @@ def generate_excel_file():
         df_summary = pd.DataFrame(summary_data)
         df_summary.to_excel(writer, sheet_name="Summary", index=False)
 
-        # Basic formatting
-        for sheet_name in writer.sheets:
-            ws = writer.sheets[sheet_name]
-            ws.set_column(0, 0, 24)   # first column
-            ws.set_column(1, 15, 18)  # others
+        # --- SAFE FORMATTING (only if engine supports set_column) ---
+        for sheet_name, ws in writer.sheets.items():
+            # xlsxwriter worksheets have set_column; openpyxl ones do not
+            if hasattr(ws, "set_column"):
+                ws.set_column(0, 0, 24)   # first column
+                ws.set_column(1, 15, 18)  # others
 
     output.seek(0)
     return output.getvalue()
+
 
 
 
@@ -1963,5 +1971,6 @@ if st.button(T["sim_run"]):
     # Store for PDF & Excel
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
 
