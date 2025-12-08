@@ -7,7 +7,7 @@ import os
 import json
 import matplotlib.pyplot as plt
 import tempfile
-import io
+import io  # NEW: for in-memory Excel
 
 from fpdf import FPDF
 
@@ -15,8 +15,6 @@ from fpdf import FPDF
 # CONFIG & CONSTANTS
 # ------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Pharos Capital: BTM Model", page_icon="🦅")
-
-PROJECTS_FILE = "pharos_projects.json"
 
 PROJECTS_FILE = "pharos_projects.json"
 ATTACHMENTS_DIR = "pharos_attachments"
@@ -431,7 +429,7 @@ with col_p2:
                 st.rerun()
             else:
                 st.warning("A project with that name already exists.")
-                
+
 # --- Delete project ---
 if len(st.session_state["projects"]) > 1:
     st.markdown("#### Delete project")
@@ -800,8 +798,6 @@ with st.sidebar.expander(T["s6_title"], expanded=False):
         st.success(f"Uploaded {len(uploaded_files)} file(s) to project '{active_proj}'.")
 
     # List existing files for this project
-
-    # List existing files for this project
     if files_list:
         st.markdown("##### Files stored for this project")
 
@@ -896,7 +892,7 @@ opex_list, sga_list, gross_list = [], [], []
 dep_list, int_list, tax_list, ftt_list, ica_list = [], [], [], [], []
 ufcf_list, lfcf_list, debt_bal_list, book_val_list, fx_rate_list = [], [], [], [], []
 
-# NEW: debt schedule breakdown
+# NEW: detailed debt schedule tracking
 opening_debt_list = []
 principal_list = []
 
@@ -962,27 +958,8 @@ for i, q in enumerate(quarters_range):
     else:
         capex_unlevered = capex_levered = sga_const_outflow = 0
 
-    for i, q in enumerate(quarters_range):
-        abs_q = (start_q_num - 1) + i
-        cal_year = start_year + (abs_q // 4)
-        ...
-        op_year = (q_op_index - 1) // 4 + 1
-        ...
-    
-        # NEW: store opening balance for this quarter
-        opening_debt = debt_balance
-    
-        if debt_balance > 0:
-            interest = debt_balance * interest_rate_quarterly
-            if q > grace_period_quarters:
-                principal = quarterly_debt_pmt - interest
-                if principal > debt_balance:
-                    principal = debt_balance
-            else:
-                principal = 0
-            debt_balance -= principal
-        else:
-            interest = principal = 0
+    # NEW: store opening balance for this quarter
+    opening_debt = debt_balance
 
     if debt_balance > 0:
         interest = debt_balance * interest_rate_quarterly
@@ -1068,7 +1045,7 @@ for i, q in enumerate(quarters_range):
     ufcf_list.append(ufcf)
     lfcf_list.append(lfcf)
 
-    # NEW: save debt schedule info
+    # NEW: debt schedule tracking
     opening_debt_list.append(opening_debt)
     principal_list.append(principal)
     debt_bal_list.append(debt_balance)
@@ -1091,10 +1068,10 @@ df_full = pd.DataFrame({
     "SGA_M_COP": sga_list, "ICA_M_COP": ica_list, "EBITDA_M_COP": ebitda_list,
     "Depreciation_M_COP": dep_list, "Interest_M_COP": int_list, "Tax_M_COP": tax_list,
     "FTT_M_COP": ftt_list, "UFCF_M_COP": ufcf_list, "LFCF_M_COP": lfcf_list,
-    # NEW:
     "Opening_Debt_M_COP": opening_debt_list,
     "Principal_M_COP": principal_list,
-    "Debt_Balance_M_COP": debt_bal_list, "Book_Value_M_COP": book_val_list,
+    "Debt_Balance_M_COP": debt_bal_list,
+    "Book_Value_M_COP": book_val_list,
     "Tax_Base_Unlev_M_COP": base_unlev_list,
     "Tax_Base_Lev_PreBenefit_M_COP": base_lev_pre_list,
     "Tax_Base_Lev_M_COP": base_lev_list,
@@ -1236,6 +1213,10 @@ if scenarios_dict:
 else:
     st.caption("No saved scenarios for this project.")
 
+
+# ------------------------------------------------------
+# EXCEL GENERATION (PHAROS MODEL V2)
+# ------------------------------------------------------
 def generate_excel_file():
     """
     Build a multi-sheet Excel workbook with:
@@ -1265,10 +1246,10 @@ def generate_excel_file():
         # 2) Full quarterly model
         df_full.to_excel(writer, sheet_name="Quarterly_Model", index=False)
 
-        # 3) Annual summary (your aggregated view)
+        # 3) Annual summary
         df_annual_full.to_excel(writer, sheet_name="Annual_Summary", index=False)
 
-        # 4) P&L (annual) – rebuild like on screen
+        # 4) P&L (annual) – as numbers
         pnl_data = df_annual_full.copy()
         pnl_data["EBIT_Disp"] = pnl_data["EBITDA_Disp"] - pnl_data["Depreciation_Disp"]
         pnl_data["EBT_Disp"] = pnl_data["EBIT_Disp"] - pnl_data["Interest_Disp"]
@@ -1310,7 +1291,7 @@ def generate_excel_file():
             scen_df.reset_index(inplace=True)
             scen_df.to_excel(writer, sheet_name="Scenarios", index=False)
 
-        # 8) Simulation matrix, if user has run it in this session
+        # 8) Simulation matrix, if user has run it
         sim_df = st.session_state.get("sim_df", None)
         if sim_df is not None:
             sim_df.to_excel(writer, sheet_name="Simulation", index=False)
@@ -1337,11 +1318,11 @@ def generate_excel_file():
         df_summary = pd.DataFrame(summary_data)
         df_summary.to_excel(writer, sheet_name="Summary", index=False)
 
-        # Basic, global column width formatting
+        # Basic formatting
         for sheet_name in writer.sheets:
             ws = writer.sheets[sheet_name]
-            ws.set_column(0, 0, 24)   # first col wider
-            ws.set_column(1, 15, 18)  # rest
+            ws.set_column(0, 0, 24)   # first column
+            ws.set_column(1, 15, 18)  # others
 
     output.seek(0)
     return output.getvalue()
@@ -1607,7 +1588,7 @@ def create_pdf(df_agg, df_annual_dash_local, proj_name, cli_name, loc,
 
 
 # ------------------------------------------------------
-# TOP KPIs & PDF BUTTON
+# TOP KPIs, PDF & EXCEL BUTTONS
 # ------------------------------------------------------
 col_head1, col_head2 = st.columns([3, 1])
 with col_head1:
@@ -1628,24 +1609,23 @@ with col_head2:
         close_df_local=close_df_for_pdf
     )
 
-    # Use scenario name (if any) for the PDF file name
+    # Use scenario name (if any) for the file names
     project_label = st.session_state.get("active_project", "").strip()
     project_label = project_label.replace(" ", "_") or "Project"
 
     scen_label = st.session_state.get("scenario_name", "").strip()
     scen_label = scen_label.replace(" ", "_") or "memo"
 
-    file_name = f"{project_label}__{scen_label}.pdf"
-
+    pdf_file_name = f"{project_label}__{scen_label}.pdf"
 
     st.download_button(
         label="📄 Download PDF Report",
         data=pdf_bytes,
-        file_name=file_name,
+        file_name=pdf_file_name,
         mime="application/pdf"
     )
 
-    # --- Excel export (Pharos Model V2) ---
+    # NEW: Excel export
     excel_bytes = generate_excel_file()
     excel_file_name = f"{project_label}__{scen_label}.xlsx"
 
@@ -1655,8 +1635,6 @@ with col_head2:
         file_name=excel_file_name,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric(T["kpi_eq"], f"{symbol}{equity_inv_disp:,.1f}")
@@ -1818,12 +1796,12 @@ table_layout = st.radio("Table Layout",
                         horizontal=True)
 
 st.markdown(f"### {T['tab_pl']}")
-pnl_data = df_annual_full.copy()
-pnl_data["EBIT_Disp"] = pnl_data["EBITDA_Disp"] - pnl_data["Depreciation_Disp"]
-pnl_data["EBT_Disp"] = pnl_data["EBIT_Disp"] - pnl_data["Interest_Disp"]
-pnl_data["Net_Income_Disp"] = pnl_data["EBT_Disp"] - pnl_data["Tax_Disp"]
+pnl_data_screen = df_annual_full.copy()
+pnl_data_screen["EBIT_Disp"] = pnl_data_screen["EBITDA_Disp"] - pnl_data_screen["Depreciation_Disp"]
+pnl_data_screen["EBT_Disp"] = pnl_data_screen["EBIT_Disp"] - pnl_data_screen["Interest_Disp"]
+pnl_data_screen["Net_Income_Disp"] = pnl_data_screen["EBT_Disp"] - pnl_data_screen["Tax_Disp"]
 
-pnl_view = pnl_data[[
+pnl_view = pnl_data_screen[[
     "Calendar_Year", "Revenue_Disp", "OPEX_Disp", "Gross_Disp",
     "SGA_Disp", "EBITDA_Disp", "Depreciation_Disp", "EBIT_Disp",
     "Interest_Disp", "EBT_Disp", "Tax_Disp", "Net_Income_Disp"
@@ -1966,12 +1944,6 @@ if st.button(T["sim_run"]):
             f"Try widening the year/value ranges."
         )
 
-    # Store for PDF
+    # Store for PDF & Excel
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
-
-
-
-
-
-
