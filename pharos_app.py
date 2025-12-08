@@ -1249,7 +1249,15 @@ def generate_excel_file():
     - Simulation matrix (if run)
     - Documentation sheet
     - Summary sheet with Excel IRR/NPV formulas + Scenario switcher (if xlsxwriter)
+
+    Numbers are rounded and, when using xlsxwriter, formatted with basic accounting/percent styles.
     """
+    def rounded(df, ndigits=1):
+        df2 = df.copy()
+        num_cols = df2.select_dtypes(include=[np.number]).columns
+        df2[num_cols] = df2[num_cols].round(ndigits)
+        return df2
+
     output = io.BytesIO()
     engine = DEFAULT_EXCEL_ENGINE
 
@@ -1262,19 +1270,23 @@ def generate_excel_file():
                 "Value": st.session_state.get(key, None)
             })
         df_inputs = pd.DataFrame(inputs_rows)
+        df_inputs = rounded(df_inputs, 2)
         df_inputs.to_excel(writer, sheet_name="Inputs", index=False)
 
         # 2) Full quarterly model
-        df_full.to_excel(writer, sheet_name="Quarterly_Model", index=False)
+        df_full_xls = rounded(df_full, 1)
+        df_full_xls.to_excel(writer, sheet_name="Quarterly_Model", index=False)
 
         # 3) Annual summary
-        df_annual_full.to_excel(writer, sheet_name="Annual_Summary", index=False)
+        df_annual_full_xls = rounded(df_annual_full, 1)
+        df_annual_full_xls.to_excel(writer, sheet_name="Annual_Summary", index=False)
 
         # 4) P&L (annual)
         pnl_data = df_annual_full.copy()
         pnl_data["EBIT_Disp"] = pnl_data["EBITDA_Disp"] - pnl_data["Depreciation_Disp"]
         pnl_data["EBT_Disp"] = pnl_data["EBIT_Disp"] - pnl_data["Interest_Disp"]
         pnl_data["Net_Income_Disp"] = pnl_data["EBT_Disp"] - pnl_data["Tax_Disp"]
+        pnl_data = rounded(pnl_data, 1)
         pnl_data.to_excel(writer, sheet_name="P&L_Annual", index=False)
 
         # 5) Tax diagnostics (levered)
@@ -1291,6 +1303,7 @@ def generate_excel_file():
             "Tax_M_COP",
             "Tax_Lev_Cum_M_COP"
         ]].copy()
+        tax_view_xls = rounded(tax_view_xls, 1)
         tax_view_xls.to_excel(writer, sheet_name="Tax_Diagnostics", index=False)
 
         # 6) Debt schedule (opening, interest, principal, closing)
@@ -1310,6 +1323,7 @@ def generate_excel_file():
             "Principal_M_COP",
             "Debt_Balance_M_COP"
         ]]
+        debt_sched = rounded(debt_sched, 1)
         debt_sched.to_excel(writer, sheet_name="Debt_Schedule", index=False)
 
         # 7) Scenarios (for active project), if any
@@ -1324,6 +1338,7 @@ def generate_excel_file():
             scen_df = pd.DataFrame.from_dict(scenarios_dict, orient="index")
             scen_df.index.name = "Scenario"
             scen_df.reset_index(inplace=True)
+            scen_df = rounded(scen_df, 2)
             scen_df.to_excel(writer, sheet_name="Scenarios", index=False)
 
         # 8) Portfolio consolidation (all projects, first scenario per project)
@@ -1345,12 +1360,14 @@ def generate_excel_file():
         portfolio_df = None
         if portfolio_rows:
             portfolio_df = pd.DataFrame(portfolio_rows)
+            portfolio_df = rounded(portfolio_df, 2)
             portfolio_df.to_excel(writer, sheet_name="Portfolio", index=False)
 
         # 9) Simulation matrix, if user has run it
         sim_df = st.session_state.get("sim_df", None)
         if sim_df is not None:
-            sim_df.to_excel(writer, sheet_name="Simulation", index=False)
+            sim_df_xls = rounded(sim_df, 2)
+            sim_df_xls.to_excel(writer, sheet_name="Simulation", index=False)
 
         # 10) Documentation sheet
         doc_rows = [
@@ -1378,10 +1395,18 @@ def generate_excel_file():
             money_fmt = workbook.add_format({"num_format": "#,##0.0"})
             percent_fmt = workbook.add_format({"num_format": "0.0%"})
 
-            # Column widths for all sheets
+            # Column widths + basic numeric formatting on main sheets
             for sheet_name, ws in writer.sheets.items():
                 ws.set_column(0, 0, 24)
-                ws.set_column(1, 20, 18)
+                # For data-heavy sheets, format all numeric columns with money_fmt
+                # (IRRs etc. will still show as numbers but with 1 decimal and separators)
+                if sheet_name in [
+                    "Quarterly_Model", "Annual_Summary", "P&L_Annual",
+                    "Tax_Diagnostics", "Debt_Schedule", "Scenarios",
+                    "Portfolio", "Simulation"
+                ]:
+                    # Assume up to column 40 for safety
+                    ws.set_column(1, 40, 16, money_fmt)
 
             # 11) Summary sheet with Excel IRR/NPV formulas
             ws_sum = workbook.add_worksheet("Summary")
@@ -1421,7 +1446,6 @@ def generate_excel_file():
             # 12) Scenario switcher (if scenarios exist)
             if scen_df is not None and not scen_df.empty:
                 ws_sum.write("B10", "Selected Scenario", label_fmt)
-                # Data validation list from Scenarios sheet
                 last_row = len(scen_df) + 1  # header + data
                 ws_sum.data_validation(
                     "C10",
@@ -1458,7 +1482,7 @@ def generate_excel_file():
                 ws_sum.write_formula("C13", idx_formula(irr_col), percent_fmt)
 
                 ws_sum.write("B14", "Scenario MOIC (x)", label_fmt)
-                ws_sum.write_formula("C14", idx_formula(moic_col), text_fmt)
+                ws_sum.write_formula("C14", idx_formula(moic_col), money_fmt)
 
                 ws_sum.write("B15", "Scenario Exit Year", label_fmt)
                 ws_sum.write_formula("C15", idx_formula(exit_year_col), text_fmt)
@@ -1467,7 +1491,7 @@ def generate_excel_file():
                 ws_sum.write_formula("C16", idx_formula(exit_val_col), money_fmt)
 
                 ws_sum.write("B17", "Scenario PPA Year 1 ($/kWh)", label_fmt)
-                ws_sum.write_formula("C17", idx_formula(ppa1_col), text_fmt)
+                ws_sum.write_formula("C17", idx_formula(ppa1_col), money_fmt)
 
             # 13) Portfolio summary formulas (weighted IRR)
             if portfolio_df is not None and not portfolio_df.empty:
@@ -1510,8 +1534,6 @@ def generate_excel_file():
 
     output.seek(0)
     return output.getvalue()
-
-
 
 
 # ------------------------------------------------------
@@ -2133,6 +2155,7 @@ if st.button(T["sim_run"]):
     # Store for PDF & Excel
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
 
 
