@@ -11,6 +11,14 @@ import io  # NEW: for in-memory Excel
 
 from fpdf import FPDF
 
+# Choose an Excel writer engine that actually exists in the environment
+try:
+    import xlsxwriter  # noqa: F401
+    DEFAULT_EXCEL_ENGINE = "xlsxwriter"
+except ModuleNotFoundError:
+    DEFAULT_EXCEL_ENGINE = "openpyxl"
+
+
 # ------------------------------------------------------
 # CONFIG & CONSTANTS
 # ------------------------------------------------------
@@ -1232,7 +1240,10 @@ def generate_excel_file():
     """
     output = io.BytesIO()
 
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+    # Use the engine we detected at import time (xlsxwriter if available,
+    # otherwise openpyxl). If openpyxl is also missing, you MUST add it
+    # to your requirements.txt.
+    with pd.ExcelWriter(output, engine=DEFAULT_EXCEL_ENGINE) as writer:
         # 1) Inputs sheet from session_state
         inputs_rows = []
         for key in PROJECT_INPUT_KEYS:
@@ -1285,6 +1296,12 @@ def generate_excel_file():
         debt_df.to_excel(writer, sheet_name="Debt_Schedule", index=False)
 
         # 7) Scenarios (for this project), if any
+        active_proj = st.session_state["active_project"]
+        proj_entry = st.session_state["projects"].setdefault(
+            active_proj, {"inputs": {}, "scenarios": {}, "files": []}
+        )
+        scenarios_dict = proj_entry.get("scenarios", {})
+
         if scenarios_dict:
             scen_df = pd.DataFrame.from_dict(scenarios_dict, orient="index")
             scen_df.index.name = "Scenario"
@@ -1326,6 +1343,7 @@ def generate_excel_file():
 
     output.seek(0)
     return output.getvalue()
+
 
 
 # ------------------------------------------------------
@@ -1947,3 +1965,4 @@ if st.button(T["sim_run"]):
     # Store for PDF & Excel
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
