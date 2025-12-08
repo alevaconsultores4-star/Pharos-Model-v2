@@ -494,20 +494,18 @@ with c_proj1:
     project_name = st.text_input(
         T["header_proj"],
         key="project_name",
-        value=st.session_state.get("project_name", "Hampton Inn Bogota - Aeropuerto")
     )
 with c_proj2:
     client_name = st.text_input(
         T["header_client"],
         key="client_name",
-        value=st.session_state.get("client_name", "Hampton Inn")
     )
 with c_proj3:
     project_loc = st.text_input(
         T["header_loc"],
         key="project_loc",
-        value=st.session_state.get("project_loc", "Bogota, Colombia")
     )
+
 
 st.markdown("---")
 
@@ -1965,4 +1963,5 @@ if st.button(T["sim_run"]):
     # Store for PDF & Excel
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
