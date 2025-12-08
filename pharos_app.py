@@ -1224,6 +1224,17 @@ else:
 # ------------------------------------------------------
 # EXCEL GENERATION (PHAROS MODEL V2)
 # ------------------------------------------------------
+def excel_col(col_idx: int) -> str:
+    """
+    Convert 0-based column index to Excel column letters (0 -> A, 25 -> Z, 26 -> AA, etc.).
+    """
+    col = ""
+    col_idx += 1
+    while col_idx:
+        col_idx, rem = divmod(col_idx - 1, 26)
+        col = chr(65 + rem) + col
+    return col
+
 def generate_excel_file():
     """
     Build a multi-sheet Excel workbook with:
@@ -1234,13 +1245,15 @@ def generate_excel_file():
     - Tax diagnostics (levered)
     - Debt schedule
     - Scenarios (per project)
+    - Portfolio consolidation (across projects)
     - Simulation matrix (if run)
-    - Summary KPIs
+    - Documentation sheet
+    - Summary sheet with Excel IRR/NPV formulas + Scenario switcher (if xlsxwriter)
     """
     output = io.BytesIO()
+    engine = DEFAULT_EXCEL_ENGINE
 
-    # Use the engine we detected earlier
-    with pd.ExcelWriter(output, engine=DEFAULT_EXCEL_ENGINE) as writer:
+    with pd.ExcelWriter(output, engine=engine) as writer:
         # 1) Inputs sheet from session_state
         inputs_rows = []
         for key in PROJECT_INPUT_KEYS:
@@ -1281,7 +1294,6 @@ def generate_excel_file():
         tax_view_xls.to_excel(writer, sheet_name="Tax_Diagnostics", index=False)
 
         # 6) Debt schedule (opening, interest, principal, closing)
-        # We reconstruct opening from previous closing
         debt_sched = df_full[[
             "Calendar_Year",
             "Quarter",
@@ -1300,52 +1312,201 @@ def generate_excel_file():
         ]]
         debt_sched.to_excel(writer, sheet_name="Debt_Schedule", index=False)
 
-        # 7) Scenarios (for this project), if any
+        # 7) Scenarios (for active project), if any
         active_proj = st.session_state["active_project"]
         proj_entry = st.session_state["projects"].setdefault(
             active_proj, {"inputs": {}, "scenarios": {}, "files": []}
         )
         scenarios_dict = proj_entry.get("scenarios", {})
 
+        scen_df = None
         if scenarios_dict:
             scen_df = pd.DataFrame.from_dict(scenarios_dict, orient="index")
             scen_df.index.name = "Scenario"
             scen_df.reset_index(inplace=True)
             scen_df.to_excel(writer, sheet_name="Scenarios", index=False)
 
-        # 8) Simulation matrix, if user has run it
+        # 8) Portfolio consolidation (all projects, first scenario per project)
+        portfolio_rows = []
+        for proj_name, pdata in st.session_state["projects"].items():
+            scen = pdata.get("scenarios", {})
+            if not scen:
+                continue
+            scen_name, scen_vals = next(iter(scen.items()))
+            portfolio_rows.append({
+                "Project": proj_name,
+                "Scenario": scen_name,
+                "Equity_Investment": scen_vals.get("Equity_Investment"),
+                "IRR_Levered_%": scen_vals.get("IRR_Levered_%"),
+                "MOIC_x": scen_vals.get("MOIC_x"),
+                "Exit_Year": scen_vals.get("Exit_Year"),
+                "Exit_Value_M_COP": scen_vals.get("Exit_Value_M_COP"),
+            })
+        portfolio_df = None
+        if portfolio_rows:
+            portfolio_df = pd.DataFrame(portfolio_rows)
+            portfolio_df.to_excel(writer, sheet_name="Portfolio", index=False)
+
+        # 9) Simulation matrix, if user has run it
         sim_df = st.session_state.get("sim_df", None)
         if sim_df is not None:
             sim_df.to_excel(writer, sheet_name="Simulation", index=False)
 
-        # 9) Summary KPIs
-        summary_data = {
-            "Metric": [
-                "Display Currency",
-                "Equity Investment (disp units)",
-                "Unlevered IRR (%)",
-                "Levered IRR (%)",
-                "Equity NPV (disp units)",
-                "MOIC (x)"
-            ],
-            "Value": [
-                currency_mode,
-                equity_inv_disp,
-                irr_unlevered,
-                irr_levered,
-                npv_equity,
-                moic_levered
-            ]
-        }
-        df_summary = pd.DataFrame(summary_data)
-        df_summary.to_excel(writer, sheet_name="Summary", index=False)
+        # 10) Documentation sheet
+        doc_rows = [
+            {"Section": "Model", "Item": "Version", "Detail": "Pharos BTM Model V2 – Excel Export"},
+            {"Section": "Model", "Item": "Generated On", "Detail": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+            {"Section": "Assumptions", "Item": "Display Currency", "Detail": currency_mode},
+            {"Section": "Assumptions", "Item": "Tax Rate", "Detail": f"{tax_rate*100:.1f}%"},
+            {"Section": "Assumptions", "Item": "CAPEX Benefit Law 1715", "Detail": "Yes" if enable_capex_benefit else "No"},
+            {"Section": "Assumptions", "Item": "Debt Enabled", "Detail": "Yes" if enable_debt else "No"},
+            {"Section": "Assumptions", "Item": "Investor Ke", "Detail": f"{investor_disc_rate*100:.1f}%"},
+            {"Section": "Notes", "Item": "Units", "Detail": "Most monetary figures in M COP; IRR/NPV based on quarterly cash flows."},
+        ]
+        df_doc = pd.DataFrame(doc_rows)
+        df_doc.to_excel(writer, sheet_name="Documentation", index=False)
 
-        # --- SAFE FORMATTING (only if engine supports set_column) ---
-        for sheet_name, ws in writer.sheets.items():
-            # xlsxwriter worksheets have set_column; openpyxl ones do not
-            if hasattr(ws, "set_column"):
-                ws.set_column(0, 0, 24)   # first column
-                ws.set_column(1, 15, 18)  # others
+        # --- Advanced formulas & styling if xlsxwriter is available ---
+        is_xlsx = (engine == "xlsxwriter")
+        if is_xlsx:
+            workbook = writer.book
+
+            # Common formats
+            title_fmt = workbook.add_format({"bold": True, "font_size": 14})
+            label_fmt = workbook.add_format({"bold": True})
+            text_fmt = workbook.add_format({})
+            money_fmt = workbook.add_format({"num_format": "#,##0.0"})
+            percent_fmt = workbook.add_format({"num_format": "0.0%"})
+
+            # Column widths for all sheets
+            for sheet_name, ws in writer.sheets.items():
+                ws.set_column(0, 0, 24)
+                ws.set_column(1, 20, 18)
+
+            # 11) Summary sheet with Excel IRR/NPV formulas
+            ws_sum = workbook.add_worksheet("Summary")
+            writer.sheets["Summary"] = ws_sum
+
+            # IRR ranges from Quarterly_Model (UFCF / LFCF in M COP)
+            q_rows = len(df_full)
+            ufcf_idx = df_full.columns.get_loc("UFCF_M_COP")
+            lfcf_idx = df_full.columns.get_loc("LFCF_M_COP")
+            ufcf_col_letter = excel_col(ufcf_idx)
+            lfcf_col_letter = excel_col(lfcf_idx)
+            ufcf_range = f"Quarterly_Model!{ufcf_col_letter}2:{ufcf_col_letter}{q_rows+1}"
+            lfcf_range = f"Quarterly_Model!{lfcf_col_letter}2:{lfcf_col_letter}{q_rows+1}"
+
+            # Header
+            ws_sum.merge_range("B1:D1", "PHAROS CAPITAL – BTM MODEL SUMMARY", title_fmt)
+
+            # Key metrics
+            ws_sum.write("B3", "Display Currency", label_fmt)
+            ws_sum.write("C3", currency_mode, text_fmt)
+
+            ws_sum.write("B4", "Equity Investment (M COP)", label_fmt)
+            ws_sum.write_number("C4", float(equity_investment_levered_cop), money_fmt)
+
+            ws_sum.write("B5", "Unlevered IRR (%)", label_fmt)
+            ws_sum.write_formula("C5", f"=IRR({ufcf_range})", percent_fmt)
+
+            ws_sum.write("B6", "Levered IRR (%)", label_fmt)
+            ws_sum.write_formula("C6", f"=IRR({lfcf_range})", percent_fmt)
+
+            ws_sum.write("B7", "Ke (discount rate, annual)", label_fmt)
+            ws_sum.write_number("C7", float(investor_disc_rate), percent_fmt)
+
+            ws_sum.write("B8", "Equity NPV (M COP)", label_fmt)
+            ws_sum.write_formula("C8", f"=NPV(C7/4,{lfcf_range})-C4", money_fmt)
+
+            # 12) Scenario switcher (if scenarios exist)
+            if scen_df is not None and not scen_df.empty:
+                ws_sum.write("B10", "Selected Scenario", label_fmt)
+                # Data validation list from Scenarios sheet
+                last_row = len(scen_df) + 1  # header + data
+                ws_sum.data_validation(
+                    "C10",
+                    {
+                        "validate": "list",
+                        "source": f"=Scenarios!$A$2:$A${last_row}",
+                    },
+                )
+
+                scen_cols = scen_df.columns.tolist()
+                name_range = f"'Scenarios'!$A$2:$A${last_row}"
+
+                def scen_col_letter(col_name: str) -> str:
+                    idx = scen_cols.index(col_name)
+                    return excel_col(idx)
+
+                eq_col = scen_col_letter("Equity_Investment")
+                irr_col = scen_col_letter("IRR_Levered_%")
+                moic_col = scen_col_letter("MOIC_x")
+                exit_year_col = scen_col_letter("Exit_Year")
+                exit_val_col = scen_col_letter("Exit_Value_M_COP")
+                ppa1_col = scen_col_letter("PPA_Year1_$perkWh")
+
+                def idx_formula(col_letter: str) -> str:
+                    return (
+                        f"=IFERROR(INDEX('Scenarios'!${col_letter}$2:${col_letter}${last_row},"
+                        f" MATCH($C$10,{name_range},0)),\"\")"
+                    )
+
+                ws_sum.write("B12", "Scenario Equity Investment", label_fmt)
+                ws_sum.write_formula("C12", idx_formula(eq_col), money_fmt)
+
+                ws_sum.write("B13", "Scenario Levered IRR (%)", label_fmt)
+                ws_sum.write_formula("C13", idx_formula(irr_col), percent_fmt)
+
+                ws_sum.write("B14", "Scenario MOIC (x)", label_fmt)
+                ws_sum.write_formula("C14", idx_formula(moic_col), text_fmt)
+
+                ws_sum.write("B15", "Scenario Exit Year", label_fmt)
+                ws_sum.write_formula("C15", idx_formula(exit_year_col), text_fmt)
+
+                ws_sum.write("B16", "Scenario Exit Value (M COP)", label_fmt)
+                ws_sum.write_formula("C16", idx_formula(exit_val_col), money_fmt)
+
+                ws_sum.write("B17", "Scenario PPA Year 1 ($/kWh)", label_fmt)
+                ws_sum.write_formula("C17", idx_formula(ppa1_col), text_fmt)
+
+            # 13) Portfolio summary formulas (weighted IRR)
+            if portfolio_df is not None and not portfolio_df.empty:
+                ws_port = writer.sheets["Portfolio"]
+                p_rows = len(portfolio_df)
+                first_data_row_excel = 2
+                last_data_row_excel = p_rows + 1
+
+                eq_idx = portfolio_df.columns.get_loc("Equity_Investment")
+                irr_idx = portfolio_df.columns.get_loc("IRR_Levered_%")
+                eq_col_letter = excel_col(eq_idx)
+                irr_col_letter = excel_col(irr_idx)
+
+                eq_range = f"'Portfolio'!${eq_col_letter}{first_data_row_excel}:${eq_col_letter}{last_data_row_excel}"
+                irr_range = f"'Portfolio'!${irr_col_letter}{first_data_row_excel}:${irr_col_letter}{last_data_row_excel}"
+
+                total_row_excel = last_data_row_excel + 2
+                total_row_idx = total_row_excel - 1  # zero-based
+
+                # Total equity
+                ws_port.write(total_row_idx, 0, "Total Equity (M COP)", label_fmt)
+                ws_port.write_formula(
+                    total_row_idx,
+                    eq_idx,
+                    f"=SUM({eq_range})",
+                    money_fmt,
+                )
+
+                # Weighted portfolio IRR
+                ws_port.write(total_row_idx + 1, 0, "Portfolio IRR (weighted, %)", label_fmt)
+                ws_port.write_formula(
+                    total_row_idx + 1,
+                    irr_idx,
+                    (
+                        f"=IF(SUM({eq_range})=0,0,"
+                        f"SUMPRODUCT({eq_range},{irr_range})/SUM({eq_range}))"
+                    ),
+                    percent_fmt,
+                )
 
     output.seek(0)
     return output.getvalue()
@@ -1972,6 +2133,7 @@ if st.button(T["sim_run"]):
     # Store for PDF & Excel
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
 
 
