@@ -10,6 +10,7 @@ import tempfile
 import io  # NEW: for in-memory Excel
 
 from fpdf import FPDF
+from datetime import datetime
 
 # Choose an Excel writer engine that actually exists in the environment
 try:
@@ -1971,6 +1972,7 @@ if st.button(T["sim_run"]):
     # Store for PDF & Excel
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
 
 
