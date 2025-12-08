@@ -7,6 +7,7 @@ import os
 import json
 import matplotlib.pyplot as plt
 import tempfile
+import io
 
 from fpdf import FPDF
 
@@ -895,6 +896,10 @@ opex_list, sga_list, gross_list = [], [], []
 dep_list, int_list, tax_list, ftt_list, ica_list = [], [], [], [], []
 ufcf_list, lfcf_list, debt_bal_list, book_val_list, fx_rate_list = [], [], [], [], []
 
+# NEW: debt schedule breakdown
+opening_debt_list = []
+principal_list = []
+
 # Tax base tracking
 base_unlev_list, base_lev_list = [], []
 base_lev_pre_list = []
@@ -956,6 +961,28 @@ for i, q in enumerate(quarters_range):
         capex_levered += sga_const_outflow
     else:
         capex_unlevered = capex_levered = sga_const_outflow = 0
+
+    for i, q in enumerate(quarters_range):
+        abs_q = (start_q_num - 1) + i
+        cal_year = start_year + (abs_q // 4)
+        ...
+        op_year = (q_op_index - 1) // 4 + 1
+        ...
+    
+        # NEW: store opening balance for this quarter
+        opening_debt = debt_balance
+    
+        if debt_balance > 0:
+            interest = debt_balance * interest_rate_quarterly
+            if q > grace_period_quarters:
+                principal = quarterly_debt_pmt - interest
+                if principal > debt_balance:
+                    principal = debt_balance
+            else:
+                principal = 0
+            debt_balance -= principal
+        else:
+            interest = principal = 0
 
     if debt_balance > 0:
         interest = debt_balance * interest_rate_quarterly
@@ -1041,6 +1068,9 @@ for i, q in enumerate(quarters_range):
     ufcf_list.append(ufcf)
     lfcf_list.append(lfcf)
 
+    # NEW: save debt schedule info
+    opening_debt_list.append(opening_debt)
+    principal_list.append(principal)
     debt_bal_list.append(debt_balance)
     book_val_list.append(book_val)
     fx_rate_list.append(fx_rate_q)
@@ -1061,6 +1091,9 @@ df_full = pd.DataFrame({
     "SGA_M_COP": sga_list, "ICA_M_COP": ica_list, "EBITDA_M_COP": ebitda_list,
     "Depreciation_M_COP": dep_list, "Interest_M_COP": int_list, "Tax_M_COP": tax_list,
     "FTT_M_COP": ftt_list, "UFCF_M_COP": ufcf_list, "LFCF_M_COP": lfcf_list,
+    # NEW:
+    "Opening_Debt_M_COP": opening_debt_list,
+    "Principal_M_COP": principal_list,
     "Debt_Balance_M_COP": debt_bal_list, "Book_Value_M_COP": book_val_list,
     "Tax_Base_Unlev_M_COP": base_unlev_list,
     "Tax_Base_Lev_PreBenefit_M_COP": base_lev_pre_list,
@@ -1202,6 +1235,117 @@ if scenarios_dict:
                 st.rerun()
 else:
     st.caption("No saved scenarios for this project.")
+
+def generate_excel_file():
+    """
+    Build a multi-sheet Excel workbook with:
+    - Inputs
+    - Quarterly model (full engine)
+    - Annual summary
+    - P&L (annual)
+    - Tax diagnostics (levered)
+    - Debt schedule
+    - Scenarios (per project)
+    - Simulation matrix (if run)
+    - Summary KPIs
+    """
+    output = io.BytesIO()
+
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        # 1) Inputs sheet from session_state
+        inputs_rows = []
+        for key in PROJECT_INPUT_KEYS:
+            inputs_rows.append({
+                "Input": key,
+                "Value": st.session_state.get(key, None)
+            })
+        df_inputs = pd.DataFrame(inputs_rows)
+        df_inputs.to_excel(writer, sheet_name="Inputs", index=False)
+
+        # 2) Full quarterly model
+        df_full.to_excel(writer, sheet_name="Quarterly_Model", index=False)
+
+        # 3) Annual summary (your aggregated view)
+        df_annual_full.to_excel(writer, sheet_name="Annual_Summary", index=False)
+
+        # 4) P&L (annual) – rebuild like on screen
+        pnl_data = df_annual_full.copy()
+        pnl_data["EBIT_Disp"] = pnl_data["EBITDA_Disp"] - pnl_data["Depreciation_Disp"]
+        pnl_data["EBT_Disp"] = pnl_data["EBIT_Disp"] - pnl_data["Interest_Disp"]
+        pnl_data["Net_Income_Disp"] = pnl_data["EBT_Disp"] - pnl_data["Tax_Disp"]
+        pnl_data.to_excel(writer, sheet_name="P&L_Annual", index=False)
+
+        # 5) Tax diagnostics (levered)
+        tax_view_xls = df_full[[
+            "Calendar_Year",
+            "Quarter",
+            "EBITDA_M_COP",
+            "Interest_M_COP",
+            "Depreciation_M_COP",
+            "Tax_Base_Lev_PreBenefit_M_COP",
+            "Capex_Tax_Benefit_M_COP",
+            "Tax_Base_Lev_M_COP",
+            "Tax_Base_Lev_Cum_M_COP",
+            "Tax_M_COP",
+            "Tax_Lev_Cum_M_COP"
+        ]].copy()
+        tax_view_xls.to_excel(writer, sheet_name="Tax_Diagnostics", index=False)
+
+        # 6) Debt schedule (opening, interest, principal, closing)
+        debt_cols = [
+            "Calendar_Year",
+            "Quarter",
+            "Opening_Debt_M_COP",
+            "Interest_M_COP",
+            "Principal_M_COP",
+            "Debt_Balance_M_COP"
+        ]
+        debt_df = df_full[debt_cols].copy()
+        debt_df.to_excel(writer, sheet_name="Debt_Schedule", index=False)
+
+        # 7) Scenarios (for this project), if any
+        if scenarios_dict:
+            scen_df = pd.DataFrame.from_dict(scenarios_dict, orient="index")
+            scen_df.index.name = "Scenario"
+            scen_df.reset_index(inplace=True)
+            scen_df.to_excel(writer, sheet_name="Scenarios", index=False)
+
+        # 8) Simulation matrix, if user has run it in this session
+        sim_df = st.session_state.get("sim_df", None)
+        if sim_df is not None:
+            sim_df.to_excel(writer, sheet_name="Simulation", index=False)
+
+        # 9) Summary KPIs
+        summary_data = {
+            "Metric": [
+                "Display Currency",
+                "Equity Investment (disp units)",
+                "Unlevered IRR (%)",
+                "Levered IRR (%)",
+                "Equity NPV (disp units)",
+                "MOIC (x)"
+            ],
+            "Value": [
+                currency_mode,
+                equity_inv_disp,
+                irr_unlevered,
+                irr_levered,
+                npv_equity,
+                moic_levered
+            ]
+        }
+        df_summary = pd.DataFrame(summary_data)
+        df_summary.to_excel(writer, sheet_name="Summary", index=False)
+
+        # Basic, global column width formatting
+        for sheet_name in writer.sheets:
+            ws = writer.sheets[sheet_name]
+            ws.set_column(0, 0, 24)   # first col wider
+            ws.set_column(1, 15, 18)  # rest
+
+    output.seek(0)
+    return output.getvalue()
+
 
 # ------------------------------------------------------
 # PDF HELPER FUNCTIONS (CHARTS)
@@ -1499,6 +1643,17 @@ with col_head2:
         data=pdf_bytes,
         file_name=file_name,
         mime="application/pdf"
+    )
+
+    # --- Excel export (Pharos Model V2) ---
+    excel_bytes = generate_excel_file()
+    excel_file_name = f"{project_label}__{scen_label}.xlsx"
+
+    st.download_button(
+        label="📊 Download Excel Model",
+        data=excel_bytes,
+        file_name=excel_file_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 
@@ -1814,6 +1969,7 @@ if st.button(T["sim_run"]):
     # Store for PDF
     st.session_state["sim_df"] = sim_df
     st.session_state["sim_close_df"] = close_df
+
 
 
 
